@@ -180,3 +180,23 @@ The implementation targets `langchain-core` 1.5's
 inputs, **kwargs)` callback shape. Agent Ed25519 keys are demo-persisted in the
 ignored `.aor_agent_keys/` directory and registered in Stage 5 on startup. In
 production, agent private keys belong in KMS/HSM custody instead.
+
+## Stage 7 action executor
+
+Stage 7 is the required outbound boundary: it checks that the exact action
+payload still matches the signed PoI and attaches it before any email is sent.
+The SMTP action adds `X-AoR-Proof-of-Intent` (the full canonical base64url
+PoI), `X-AoR-Signature` (a redundant quick-check copy), and
+`X-AoR-Agent-Cert` (the Stage 5 public-key reference). Optional encrypted audit
+rationale is carried in `X-AoR-Encrypted-Reasoning` using AES-256-GCM; it is
+for explicitly supplied audit rationale, not private model reasoning.
+
+```bash
+.venv/bin/python -m pytest action_executor/tests
+.venv/bin/python -m action_executor.demo
+```
+
+The demo uses `dry_run=True`, writes a standard `.eml` artifact to the ignored
+`.aor_outbox/` directory, prints its AoR headers, decodes the embedded PoI, and
+verifies its agent signature. Set `SMTPConfig(dry_run=False, host=..., ...)`
+only with a dedicated test SMTP account for a live panel demonstration.
