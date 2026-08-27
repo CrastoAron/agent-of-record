@@ -6,12 +6,38 @@ import base64
 import binascii
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Protocol
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from crypto_core import hash_payload, verify
 
 from .models import SignedEnvelope
 from .nonce_store import NonceStore
-from .pubkey_store import PubkeyStore
+
+
+class PublicKeyLookup(Protocol):
+    """Minimal Stage 4 lookup interface implemented by both key-store versions."""
+
+    def get_pubkey(self, pubkey_id: str) -> bytes | Ed25519PublicKey | EllipticCurvePublicKey | None: ...
+
+
+def _load_registered_public_key(
+    stored_key: bytes | Ed25519PublicKey | EllipticCurvePublicKey,
+) -> Ed25519PublicKey | EllipticCurvePublicKey:
+    """Accept legacy parsed keys or Stage 5's registered key-byte format."""
+    if isinstance(stored_key, (Ed25519PublicKey, EllipticCurvePublicKey)):
+        return stored_key
+    try:
+        parsed_key = serialization.load_der_public_key(stored_key)
+    except ValueError:
+        if len(stored_key) == 32:
+            return Ed25519PublicKey.from_public_bytes(stored_key)
+        raise
+    if not isinstance(parsed_key, (Ed25519PublicKey, EllipticCurvePublicKey)):
+        raise ValueError("unsupported registered public key")
+    return parsed_key
 
 
 @dataclass(frozen=True)
@@ -27,7 +53,7 @@ class SignatureVerifier:
 
     def __init__(
         self,
-        pubkey_store: PubkeyStore,
+        pubkey_store: PublicKeyLookup,
         nonce_store: NonceStore,
         freshness_seconds: int = 60,
     ) -> None:
@@ -62,8 +88,12 @@ class SignatureVerifier:
         # The requested flow consumes a fresh nonce before key/signature checks.
         self._nonce_store.mark_seen(envelope.nonce)
 
-        public_key = self._pubkey_store.get_pubkey(envelope.pubkey_id)
-        if public_key is None:
+        stored_key = self._pubkey_store.get_pubkey(envelope.pubkey_id)
+        if stored_key is None:
+            return VerificationResult(False, "unknown_pubkey")
+        try:
+            public_key = _load_registered_public_key(stored_key)
+        except (TypeError, ValueError):
             return VerificationResult(False, "unknown_pubkey")
 
         if envelope.signature_algorithm != "ECDSA-P256-SHA256":

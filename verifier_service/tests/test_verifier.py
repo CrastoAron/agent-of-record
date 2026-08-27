@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-from fastapi.testclient import TestClient
+import httpx
 
 from crypto_core import hash_payload
 from verifier_service.main import create_app
@@ -15,6 +16,20 @@ from verifier_service.models import SignedEnvelope
 from verifier_service.nonce_store import NonceStore
 from verifier_service.pubkey_store import PubkeyStore
 from verifier_service.verifier import SignatureVerifier
+
+
+async def _request_async(
+    app, method: str, path: str, payload: dict[str, object] | None = None
+) -> httpx.Response:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        return await client.request(method, path, json=payload)
+
+
+def _request(app, method: str, path: str, payload: dict[str, object] | None = None) -> httpx.Response:
+    """Run an endpoint request without TestClient's Python 3.14 incompatibility."""
+    return asyncio.run(_request_async(app, method, path, payload))
 
 
 def _timestamp(offset_seconds: int = 0) -> str:
@@ -138,10 +153,9 @@ def test_api_rejection_is_generic_and_never_calls_downstream_handler() -> None:
     private_key = ec.generate_private_key(ec.SECP256R1())
     downstream = Mock()
     app = create_app(on_verified=downstream)
-    client = TestClient(app)
     envelope = _make_envelope(private_key, pubkey_id="unknown")
 
-    response = client.post("/api/prompt", json=envelope.model_dump())
+    response = _request(app, "POST", "/api/prompt", envelope.model_dump())
 
     assert response.status_code == 401
     assert response.json() == {"detail": "verification_failed"}
@@ -151,7 +165,6 @@ def test_api_rejection_is_generic_and_never_calls_downstream_handler() -> None:
 def test_api_register_then_verify_and_reject_replay() -> None:
     private_key = ec.generate_private_key(ec.SECP256R1())
     app = create_app()
-    client = TestClient(app)
     public_key_b64 = base64.b64encode(
         private_key.public_key().public_bytes(
             serialization.Encoding.DER,
@@ -160,12 +173,11 @@ def test_api_register_then_verify_and_reject_replay() -> None:
     ).decode("ascii")
     envelope = _make_envelope(private_key)
 
-    registration = client.post(
-        "/register-pubkey",
-        json={"pubkey_id": envelope.pubkey_id, "public_key_b64": public_key_b64},
+    registration = _request(
+        app, "POST", "/register-pubkey", {"pubkey_id": envelope.pubkey_id, "public_key_b64": public_key_b64}
     )
-    verified = client.post("/api/prompt", json=envelope.model_dump())
-    replayed = client.post("/api/prompt", json=envelope.model_dump())
+    verified = _request(app, "POST", "/api/prompt", envelope.model_dump())
+    replayed = _request(app, "POST", "/api/prompt", envelope.model_dump())
 
     assert registration.status_code == 201
     assert verified.status_code == 200
@@ -184,14 +196,12 @@ def test_api_accepts_the_stage3_p256_jwk_registration_format() -> None:
         "y": _base64url(numbers.y.to_bytes(32, "big")),
     }
     app = create_app()
-    client = TestClient(app)
     envelope = _make_envelope(private_key)
 
-    registration = client.post(
-        "/register-pubkey",
-        json={"pubkey_id": envelope.pubkey_id, "public_key_jwk": stage3_jwk},
+    registration = _request(
+        app, "POST", "/register-pubkey", {"pubkey_id": envelope.pubkey_id, "public_key_jwk": stage3_jwk}
     )
-    verified = client.post("/api/prompt", json=envelope.model_dump())
+    verified = _request(app, "POST", "/api/prompt", envelope.model_dump())
 
     assert registration.status_code == 201
     assert verified.status_code == 200

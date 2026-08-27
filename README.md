@@ -14,6 +14,8 @@ by later AoR stages. It has no networking, web framework, or LLM dependencies.
   setup instructions and npm dependencies.
 - `verifier_service/` — FastAPI signature-verification boundary (Stage 4),
   which rejects invalid client envelopes before any downstream step.
+- `key_registry/` — SQLite-backed agent public-key registry and JWK Set
+  publication layer (Stage 5).
 - `demo.py` — a Context Ledger and Merkle-proof forensic demonstration.
 
 The module uses [rfc8785](https://pypi.org/project/rfc8785/), a dedicated RFC
@@ -48,7 +50,7 @@ control.
 
 ## Run and verify
 
-Run the Stage 1 and Stage 2 acceptance suites:
+Run all implemented-stage acceptance suites:
 
 ```bash
 python -m pytest
@@ -122,7 +124,38 @@ handler is permitted to run. Rejections return only
 .venv/bin/python -m verifier_service.demo
 ```
 
+After starting Uvicorn, open the interactive API documentation at
+`http://127.0.0.1:8000/docs`. The service intentionally has no browser
+homepage at `/`; inspect its published active keys at
+`http://127.0.0.1:8000/.well-known/jwks.json` instead.
+
 `/register-pubkey` accepts either the Stage 3 public P-256 JWK
 (`public_key_jwk`) or a base64-encoded DER SubjectPublicKeyInfo key
-(`public_key_b64`). The temporary store has the same `register_pubkey` /
-`get_pubkey` boundary that Stage 5's key registry will replace.
+(`public_key_b64`).
+
+## Stage 5 key registry
+
+Stage 5 replaces the default in-memory key lookup with `KeyRegistry`, backed by
+SQLite. It maps `agent_id` to public keys with validity windows and revocation
+state. `get_pubkey(pubkey_id)` returns `None` for unknown, expired,
+not-yet-valid, and revoked keys, so Stage 4 exposes each case as the same
+generic verification failure.
+
+### Run Stage 5
+
+```bash
+.venv/bin/python -m pytest key_registry/tests
+.venv/bin/python -m key_registry.demo
+```
+
+The FastAPI endpoints are:
+
+- `POST /register-key` — register an agent public key, its algorithm, and its validity window.
+- `POST /revoke-key` — revoke a registered `pubkey_id`.
+- `GET /.well-known/jwks.json` — publish only active, non-revoked public keys.
+
+The older `/register-pubkey` route is retained as a Stage 4 compatibility shim.
+The registry supports Ed25519 (`OKP`) and the Stage 3 ECDSA P-256 (`EC`) keys.
+X.509 certificate issuance is deferred: the `AgentKeyRecord` validity/revocation
+model is compatible with a future certificate/KMS-backed implementation, while
+JWK Sets cover the demo's public key-distribution needs.
