@@ -239,9 +239,56 @@ the presentation demo and an application integration must register an
 `ActionEvidence` record at action time (the original signed envelope, system
 prompt, ledger snapshot boundary, and optional `.eml`) in `ActionEvidenceStore`.
 This is deliberately explicit until persistence is introduced in a later stage.
+When Stage 9 is enabled, pass the shared `AnchorStore` to the portal app; the
+portal looks up the signed context root there before verifying its token.
 
 For a MIME text body written by Stage 7, the parser removes exactly the single
 terminal newline added by `EmailMessage.set_content`, so its reconstructed
 `{to, subject, body}` matches the pre-MIME payload that the PoI hashes.
 Timestamp anchoring is shown as **pending**, not silently accepted: RFC 3161 TSA
 token generation and cryptographic validation are Stage 9 work.
+
+## Stage 9 RFC 3161 timestamp anchoring
+
+Stage 9 anchors the current Stage 2 Merkle root — never raw prompt or ledger
+content — with an RFC 3161 Time Stamp Authority. It uses the actively maintained
+[`rfc3161-client`](https://pypi.org/project/rfc3161-client/) package for TSP
+encoding/parsing and CMS signature-chain verification.
+
+The default provider is FreeTSA at `https://freetsa.org/tsr`. Its source-controlled
+configuration is [freetsa.json](tsa_anchor/config/freetsa.json): it contains the
+endpoint, published CA certificate URL, and a pinned CA SHA-256 digest. The
+provider currently publishes its request endpoint, CA certificate, and OpenSSL
+verification procedure at [FreeTSA's timestamping guide](https://freetsa.org/index_en.php).
+The CA pin must be reviewed and deliberately updated if that provider rotates
+its CA.
+
+FreeTSA advertises SHA-256/384/512 message imprints, whereas the AoR ledger root
+is SHA3-256. Therefore, the timestamp's standard SHA-256 `hashedMessage` commits
+to the exact 32 bytes of the SHA3 ledger root. Verification applies the token's
+declared imprint algorithm to the supplied root and compares the result with the
+embedded digest, so a timestamp for one root cannot be presented as evidence for
+another.
+
+Run normal deterministic tests (network tests are skipped by default):
+
+```bash
+.venv/bin/python -m pytest tsa_anchor/tests
+```
+
+Run the explicit live-TSA checks and the panel walkthrough:
+
+```bash
+.venv/bin/python -m pytest tsa_anchor/tests -m network
+.venv/bin/python -m tsa_anchor.demo
+```
+
+`AnchorStore` is an in-memory, append-only list keyed by ledger root for this
+stage. `AnchorScheduler` checks every five minutes by default and avoids duplicate
+requests for an already anchored unchanged root; failed attempts are retained and
+may be retried on the next interval. Production should persist these records and
+batch roots with a durable scheduler.
+
+The portal's timestamp link now delegates to the Stage 9 verifier. It reports
+`verified, anchored at <genTime>` for a valid stored RFC 3161 response and retains
+the distinct `pending` state when an action has not yet been anchored.

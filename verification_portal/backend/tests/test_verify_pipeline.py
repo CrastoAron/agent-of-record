@@ -1,9 +1,12 @@
 import asyncio
+from datetime import datetime, timezone
 
 import httpx
 
 from verification_portal.backend.main import create_app
 from verification_portal.backend.models import VerificationTrace
+from verification_portal.backend.tsa_verify import TimestampAnchorResult
+from verification_portal.backend.verify_pipeline import VerificationPipeline
 
 
 def _links(trace: VerificationTrace):
@@ -103,3 +106,26 @@ def test_action_id_uses_saved_eml_evidence(portal_scenario):
 
     assert trace.overall_valid is True
     assert all(link.passed for link in trace.links)
+
+
+def test_portal_looks_up_stage9_anchor_by_signed_root(monkeypatch, portal_scenario):
+    from ledger_core import build_merkle_tree
+    from tsa_anchor.anchor_scheduler import AnchorStore
+    from tsa_anchor.models import AnchorRecord
+
+    root = build_merkle_tree(portal_scenario.ledger.all_entries()).root()
+    anchors = AnchorStore()
+    anchors.add(AnchorRecord(root, b"stage9-token", datetime.now(timezone.utc), datetime.now(timezone.utc), "anchored"))
+
+    def fake_timestamp_check(token, checked_root):
+        assert token == b"stage9-token"
+        assert checked_root == root
+        return TimestampAnchorResult(True, False, "verified, anchored at 2026-08-27T10:00:00Z")
+
+    monkeypatch.setattr("verification_portal.backend.verify_pipeline.verify_timestamp_token", fake_timestamp_check)
+    trace = VerificationPipeline(portal_scenario.registry, portal_scenario.evidence_store, anchors).run_verification(portal_scenario.eml_bytes)
+
+    timestamp_link = _links(trace)["timestamp_anchor"]
+    assert timestamp_link.status == "passed"
+    assert timestamp_link.passed is True
+    assert trace.timestamp_verified is True

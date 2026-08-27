@@ -10,19 +10,23 @@ requires-python = ">=3.10"
 dependencies = [
     "cryptography>=42.0.0",
     "fastapi>=0.115.0,<0.116.0",
+    "httpx>=0.27.0,<0.29.0",
     "langchain-core>=1.3.0,<1.6.0",
     "pydantic>=2.0.0",
     "python-multipart>=0.0.9",
+    "rfc3161-client>=1.0.8,<1.1.0",
     "rfc8785>=0.1.4",
     "uvicorn>=0.30.0",
 ]
 
 [project.optional-dependencies]
-dev = ["httpx>=0.27.0,<0.29.0", "pytest>=8.0.0"]
+dev = ["pytest>=8.0.0"]
 
 [tool.pytest.ini_options]
-testpaths = ["crypto_core/tests", "ledger_core/tests", "verifier_service/tests", "key_registry/tests", "poi_generator/tests", "action_executor/tests", "verification_portal/backend/tests"]
+testpaths = ["crypto_core/tests", "ledger_core/tests", "verifier_service/tests", "key_registry/tests", "poi_generator/tests", "action_executor/tests", "verification_portal/backend/tests", "tsa_anchor/tests"]
 pythonpath = ["."]
+markers = ["network: requires an available public TSA and network access"]
+addopts = "-m 'not network'"
 
 [tool.setuptools.packages.find]
-include = ["crypto_core*", "ledger_core*", "verifier_service*", "key_registry*", "poi_generator*", "action_executor*", "verification_portal*"]
+include = ["crypto_core*", "ledger_core*", "verifier_service*", "key_registry*", "poi_generator*", "action_executor*", "verification_portal*", "tsa_anchor*"]

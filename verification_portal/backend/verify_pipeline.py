@@ -16,6 +16,7 @@ from key_registry import KeyRegistry
 from ledger_core import Ledger, LedgerEntry, build_merkle_tree, verify_merkle_proof
 from poi_generator import verify_poi_signature
 from poi_generator.models import ProofOfIntent
+from tsa_anchor.anchor_scheduler import AnchorStore
 
 from .eml_parser import parse_eml
 from .evidence_store import ActionEvidence, ActionEvidenceStore
@@ -67,9 +68,15 @@ def _unavailable(link_name: str, detail: str) -> LinkResult:
 class VerificationPipeline:
     """Verify artifacts using injectable registry and captured-evidence stores."""
 
-    def __init__(self, key_registry: KeyRegistry, evidence_store: ActionEvidenceStore) -> None:
+    def __init__(
+        self,
+        key_registry: KeyRegistry,
+        evidence_store: ActionEvidenceStore,
+        anchor_store: AnchorStore | None = None,
+    ) -> None:
         self._key_registry = key_registry
         self._evidence_store = evidence_store
+        self._anchor_store = anchor_store
 
     def run_verification(
         self, eml_bytes: bytes | None = None, action_id: str | None = None
@@ -200,7 +207,17 @@ class VerificationPipeline:
         if evidence is None or recomputed_root is None:
             links.append(_unavailable("timestamp_anchor", "unable to check: ledger root unavailable"))
         else:
-            timestamp_result = verify_timestamp_token(evidence.timestamp_token, recomputed_root)
+            timestamp_token = evidence.timestamp_token
+            if timestamp_token is None and self._anchor_store is not None and poi is not None:
+                # Look up the exact root signed at action time. Verification still
+                # uses the freshly recomputed root, detecting later ledger edits.
+                try:
+                    signed_root = bytes.fromhex(poi.context_root)
+                    anchored = self._anchor_store.latest_anchored(signed_root)
+                    timestamp_token = anchored.token_bytes if anchored else None
+                except ValueError:
+                    timestamp_token = None
+            timestamp_result = verify_timestamp_token(timestamp_token, recomputed_root)
             links.append(LinkResult(link_name="timestamp_anchor", passed=timestamp_result.pending or timestamp_result.verified, status="pending" if timestamp_result.pending else ("passed" if timestamp_result.verified else "failed"), detail=timestamp_result.detail))
 
         overall_valid = all(link.passed for link in links)
@@ -213,6 +230,7 @@ def run_verification(
     *,
     key_registry: KeyRegistry,
     evidence_store: ActionEvidenceStore,
+    anchor_store: AnchorStore | None = None,
 ) -> VerificationTrace:
     """Functional convenience entry point for callers that do not retain a pipeline."""
-    return VerificationPipeline(key_registry, evidence_store).run_verification(eml_bytes, action_id)
+    return VerificationPipeline(key_registry, evidence_store, anchor_store).run_verification(eml_bytes, action_id)

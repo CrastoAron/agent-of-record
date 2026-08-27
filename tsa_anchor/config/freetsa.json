@@ -1,0 +1,8 @@
+{
+  "provider": "FreeTSA",
+  "endpoint": "https://freetsa.org/tsr",
+  "root_ca_url": "https://freetsa.org/files/cacert.pem",
+  "root_ca_sha256": "2151b61137ffa86bf664691ba67e7da0b19f98c758e3d228d5d8ebf27e044438",
+  "request_hash_algorithm": "SHA256",
+  "timeout_seconds": 20
+}
