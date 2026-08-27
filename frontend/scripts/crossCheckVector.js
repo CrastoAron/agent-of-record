@@ -17,9 +17,10 @@ const signedPayload = {
 };
 
 const { hash } = canonicalizeAndHash(signedPayload);
+const publicKeyJwk = await exportPublicKey();
 const publicKey = await globalThis.crypto.subtle.importKey(
   "jwk",
-  await exportPublicKey(),
+  publicKeyJwk,
   { name: "ECDSA", namedCurve: "P-256" },
   true,
   ["verify"],
@@ -39,6 +40,7 @@ console.log(JSON.stringify({
   signed_payload: signedPayload,
   canonical_payload_hex: envelope.canonical_payload_hex,
   hash_sha3_256: envelope.hash_sha3_256,
+  public_key_jwk: publicKeyJwk,
   signature_self_check: signatureValid,
   signed_envelope: envelope,
 }, null, 2));
