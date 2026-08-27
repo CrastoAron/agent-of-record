@@ -2,10 +2,13 @@
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+from cryptography.hazmat.primitives.asymmetric.ec import ECDSA, SECP256R1, EllipticCurvePublicKey
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 
 def generate_keypair() -> tuple[Ed25519PrivateKey, Ed25519PublicKey]:
@@ -23,15 +26,32 @@ def sign(private_key: Ed25519PrivateKey, data: bytes) -> bytes:
     return private_key.sign(data)
 
 
-def verify(public_key: Ed25519PublicKey, signature: bytes, data: bytes) -> bool:
-    """Return whether an Ed25519 signature is valid; never raise on failure."""
-    if not isinstance(public_key, Ed25519PublicKey):
-        raise TypeError("public_key must be an Ed25519PublicKey")
+def verify(public_key: Ed25519PublicKey | EllipticCurvePublicKey, signature: bytes, data: bytes) -> bool:
+    """Return whether a supported public-key signature is valid.
+
+    Ed25519 is the Stage 1 primitive. ECDSA P-256 support accepts the browser
+    Web Crypto format used by Stage 3: a 64-byte raw ``r || s`` signature over
+    ``data`` with ECDSA/SHA-256. It lets Stage 4 verify browser signatures
+    without duplicating cryptographic verification logic.
+    """
+    if not isinstance(public_key, (Ed25519PublicKey, EllipticCurvePublicKey)):
+        raise TypeError("public_key must be an Ed25519PublicKey or P-256 public key")
     if not isinstance(signature, bytes) or not isinstance(data, bytes):
         raise TypeError("signature and data must be bytes")
     try:
-        public_key.verify(signature, data)
-    except InvalidSignature:
+        if isinstance(public_key, Ed25519PublicKey):
+            public_key.verify(signature, data)
+        elif isinstance(public_key.curve, SECP256R1) and len(signature) == 64:
+            r = int.from_bytes(signature[:32], "big")
+            s = int.from_bytes(signature[32:], "big")
+            public_key.verify(
+                encode_dss_signature(r, s),
+                data,
+                ECDSA(hashes.SHA256()),
+            )
+        else:
+            return False
+    except (InvalidSignature, ValueError):
         return False
     return True
 

@@ -10,6 +10,10 @@ by later AoR stages. It has no networking, web framework, or LLM dependencies.
 - `crypto_core/tests/` — pytest acceptance tests for the core.
 - `ledger_core/` — in-memory append-only context ledger and SHA3-256 Merkle
   tree/proof utilities (Stage 2).
+- `frontend/` — Vite/React client-side signing demo (Stage 3); it has its own
+  setup instructions and npm dependencies.
+- `verifier_service/` — FastAPI signature-verification boundary (Stage 4),
+  which rejects invalid client envelopes before any downstream step.
 - `demo.py` — a Context Ledger and Merkle-proof forensic demonstration.
 
 The module uses [rfc8785](https://pypi.org/project/rfc8785/), a dedicated RFC
@@ -96,3 +100,29 @@ assert verify(public_key, signature, payload_hash)
 
 `crypto_core.signing` also provides raw-byte and PEM serialization helpers for
 Ed25519 keys. Later AoR stages will define secure key registration and storage.
+
+## Stage 3 frontend
+
+The Stage 3 client is kept in [frontend/](frontend/README.md), separate from
+the Python core that a later FastAPI verifier will use. It canonicalizes the
+five signed fields with JCS, hashes them with SHA3-256, and signs locally with
+a non-extractable browser key. See the frontend README for setup, its browser
+algorithm decision, and the JS-to-Python cross-check procedure.
+
+## Stage 4 signature verifier
+
+The standalone FastAPI verifier is in `verifier_service/`. It enforces a
+60-second timestamp window, detects nonce reuse, resolves a registered public
+key, and verifies a Stage 3 signature before the placeholder downstream
+handler is permitted to run. Rejections return only
+`verification_failed` to the client while the specific reason is logged.
+
+```bash
+.venv/bin/python -m uvicorn verifier_service.main:app --reload
+.venv/bin/python -m verifier_service.demo
+```
+
+`/register-pubkey` accepts either the Stage 3 public P-256 JWK
+(`public_key_jwk`) or a base64-encoded DER SubjectPublicKeyInfo key
+(`public_key_b64`). The temporary store has the same `register_pubkey` /
+`get_pubkey` boundary that Stage 5's key registry will replace.
