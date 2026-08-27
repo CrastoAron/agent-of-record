@@ -18,6 +18,10 @@ by later AoR stages. It has no networking, web framework, or LLM dependencies.
   publication layer (Stage 5).
 - `poi_generator/` — signed Proof of Intent generation and LangChain pre-tool
   callback integration (Stage 6).
+- `action_executor/` — SMTP outbound boundary that writes/sends PoI-attached
+  email actions (Stage 7).
+- `verification_portal/` — FastAPI verification trace API and separate React
+  portal UI (Stage 8).
 - `demo.py` — a Context Ledger and Merkle-proof forensic demonstration.
 
 The module uses [rfc8785](https://pypi.org/project/rfc8785/), a dedicated RFC
@@ -200,3 +204,44 @@ The demo uses `dry_run=True`, writes a standard `.eml` artifact to the ignored
 `.aor_outbox/` directory, prints its AoR headers, decodes the embedded PoI, and
 verifies its agent signature. Set `SMTPConfig(dry_run=False, host=..., ...)`
 only with a dedicated test SMTP account for a live panel demonstration.
+
+## Stage 8 verification portal
+
+Stage 8 provides the panel-facing forensic trace. It accepts a Stage 7 `.eml`
+artifact or an `action_id` and checks the PoI header, all committed hashes,
+agent signature, original user signature, live Context Ledger Merkle root, and
+timestamp-anchor state. It always returns all six links, even if one fails.
+
+Run its tests and the three-case presentation walkthrough:
+
+```bash
+.venv/bin/python -m pytest verification_portal/backend/tests
+.venv/bin/python -m verification_portal.demo
+```
+
+Run the API on port 8001 (Stage 4 already uses port 8000):
+
+```bash
+.venv/bin/python -m uvicorn verification_portal.backend.main:app --reload --port 8001
+```
+
+Then run the separate React UI in another terminal:
+
+```bash
+cd verification_portal/frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5174`. The portal UI uploads `.eml` files or submits an
+action ID to the API. Its default in-memory server has no saved action evidence;
+the presentation demo and an application integration must register an
+`ActionEvidence` record at action time (the original signed envelope, system
+prompt, ledger snapshot boundary, and optional `.eml`) in `ActionEvidenceStore`.
+This is deliberately explicit until persistence is introduced in a later stage.
+
+For a MIME text body written by Stage 7, the parser removes exactly the single
+terminal newline added by `EmailMessage.set_content`, so its reconstructed
+`{to, subject, body}` matches the pre-MIME payload that the PoI hashes.
+Timestamp anchoring is shown as **pending**, not silently accepted: RFC 3161 TSA
+token generation and cryptographic validation are Stage 9 work.

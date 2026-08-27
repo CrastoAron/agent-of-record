@@ -2,6 +2,8 @@
 node_modules/
 frontend/node_modules/
 frontend/dist/
+verification_portal/frontend/node_modules/
+verification_portal/frontend/dist/
 .aor_agent_keys/
 .aor_outbox/
 __pycache__/
