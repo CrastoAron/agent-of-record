@@ -23,10 +23,10 @@ dependencies = [
 dev = ["pytest>=8.0.0"]
 
 [tool.pytest.ini_options]
-testpaths = ["crypto_core/tests", "ledger_core/tests", "verifier_service/tests", "key_registry/tests", "poi_generator/tests", "action_executor/tests", "verification_portal/backend/tests", "tsa_anchor/tests"]
+testpaths = ["crypto_core/tests", "ledger_core/tests", "verifier_service/tests", "key_registry/tests", "poi_generator/tests", "action_executor/tests", "verification_portal/backend/tests", "tsa_anchor/tests", "e2e_tests"]
 pythonpath = ["."]
 markers = ["network: requires an available public TSA and network access"]
 addopts = "-m 'not network'"
 
 [tool.setuptools.packages.find]
-include = ["crypto_core*", "ledger_core*", "verifier_service*", "key_registry*", "poi_generator*", "action_executor*", "verification_portal*", "tsa_anchor*"]
+include = ["crypto_core*", "ledger_core*", "verifier_service*", "key_registry*", "poi_generator*", "action_executor*", "verification_portal*", "tsa_anchor*", "e2e_tests*"]

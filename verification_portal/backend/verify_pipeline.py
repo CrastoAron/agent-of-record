@@ -160,7 +160,7 @@ class VerificationPipeline:
         else:
             agent_bytes = self._key_registry.get_pubkey(poi.agent_pubkey_id or "")
             if agent_bytes is None:
-                links.append(LinkResult(link_name="agent_signature", passed=False, status="failed", detail="agent public key is unknown, expired, or revoked"))
+                links.append(LinkResult(link_name="agent_signature", passed=False, status="failed", detail="agent public key is unknown, expired, or currently revoked; this current trust failure alone does not prove the historical action was fraudulent"))
             else:
                 try:
                     valid_agent_signature = verify_poi_signature(poi, _load_public_key(agent_bytes))
