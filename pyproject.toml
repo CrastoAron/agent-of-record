@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-of-record"
+version = "0.1.0"
+description = "Agent-of-Record core cryptographic primitives"
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=42.0.0",
+    "rfc8785>=0.1.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["crypto_core/tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["crypto_core*"]
