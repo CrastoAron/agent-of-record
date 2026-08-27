@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-of-record"
 version = "0.1.0"
-description = "Agent-of-Record core cryptographic primitives"
+description = "Agent-of-Record cryptographic primitives and context ledger"
 requires-python = ">=3.10"
 dependencies = [
     "cryptography>=42.0.0",
@@ -16,8 +16,8 @@ dependencies = [
 dev = ["pytest>=8.0.0"]
 
 [tool.pytest.ini_options]
-testpaths = ["crypto_core/tests"]
+testpaths = ["crypto_core/tests", "ledger_core/tests"]
 pythonpath = ["."]
 
 [tool.setuptools.packages.find]
-include = ["crypto_core*"]
+include = ["crypto_core*", "ledger_core*"]

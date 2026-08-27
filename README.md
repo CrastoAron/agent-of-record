@@ -8,8 +8,9 @@ by later AoR stages. It has no networking, web framework, or LLM dependencies.
 - `crypto_core/` — RFC 8785 JSON canonicalization, SHA3-256 hashing, and
   Ed25519 signing utilities.
 - `crypto_core/tests/` — pytest acceptance tests for the core.
-- `demo.py` — an inspectable end-to-end canonicalize → hash → sign → verify
-  demonstration.
+- `ledger_core/` — in-memory append-only context ledger and SHA3-256 Merkle
+  tree/proof utilities (Stage 2).
+- `demo.py` — a Context Ledger and Merkle-proof forensic demonstration.
 
 The module uses [rfc8785](https://pypi.org/project/rfc8785/), a dedicated RFC
 8785 implementation, rather than custom serialization logic. It uses
@@ -43,7 +44,7 @@ control.
 
 ## Run and verify
 
-Run the Stage 1 acceptance suite:
+Run the Stage 1 and Stage 2 acceptance suites:
 
 ```bash
 python -m pytest
@@ -55,9 +56,20 @@ Run the end-to-end demonstration:
 python demo.py
 ```
 
-The demo creates an ephemeral Ed25519 key pair and prints the JCS canonical
-payload, SHA3-256 digest, Ed25519 signature, and the final verification result.
-Signatures will differ on each run because the private key is newly generated.
+The demo appends sample context entries, prints their hash chain and Merkle
+root, validates an inclusion proof, then simulates a direct content mutation.
+It reports the first broken ledger entry and shows that the altered leaf no
+longer validates against the original Merkle root.
+
+### Stage 2 Merkle conventions
+
+The Context Ledger is in memory and append-only through its public API. Each
+leaf commits the entry's `content` and the previous leaf hash using Stage 1's
+JCS-plus-SHA3-256 helper. For an odd-sized Merkle level, the final hash is
+duplicated as its own right sibling. Each proof item is 33 bytes: a one-byte
+direction marker (`00` for a left sibling, `01` for a right sibling), followed
+by the 32-byte sibling hash. This makes a proof independently verifiable while
+preserving left/right hash order.
 
 If you prefer not to activate the environment, run commands directly through
 it:
@@ -83,5 +95,4 @@ assert verify(public_key, signature, payload_hash)
 ```
 
 `crypto_core.signing` also provides raw-byte and PEM serialization helpers for
-Ed25519 keys. The demo key is intentionally short-lived; later AoR stages will
-define secure key registration and storage.
+Ed25519 keys. Later AoR stages will define secure key registration and storage.
