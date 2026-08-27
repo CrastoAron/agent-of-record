@@ -5,11 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-of-record"
 version = "0.1.0"
-description = "Agent-of-Record crypto, context ledger, verifier, and key registry"
+description = "Agent-of-Record crypto, ledger, verifier, registry, and proof of intent"
 requires-python = ">=3.10"
 dependencies = [
     "cryptography>=42.0.0",
     "fastapi>=0.115.0,<0.116.0",
+    "langchain-core>=1.3.0,<1.6.0",
     "pydantic>=2.0.0",
     "rfc8785>=0.1.4",
     "uvicorn>=0.30.0",
@@ -19,8 +20,8 @@ dependencies = [
 dev = ["httpx>=0.27.0,<0.29.0", "pytest>=8.0.0"]
 
 [tool.pytest.ini_options]
-testpaths = ["crypto_core/tests", "ledger_core/tests", "verifier_service/tests", "key_registry/tests"]
+testpaths = ["crypto_core/tests", "ledger_core/tests", "verifier_service/tests", "key_registry/tests", "poi_generator/tests"]
 pythonpath = ["."]
 
 [tool.setuptools.packages.find]
-include = ["crypto_core*", "ledger_core*", "verifier_service*", "key_registry*"]
+include = ["crypto_core*", "ledger_core*", "verifier_service*", "key_registry*", "poi_generator*"]

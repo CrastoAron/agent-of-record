@@ -16,6 +16,8 @@ by later AoR stages. It has no networking, web framework, or LLM dependencies.
   which rejects invalid client envelopes before any downstream step.
 - `key_registry/` — SQLite-backed agent public-key registry and JWK Set
   publication layer (Stage 5).
+- `poi_generator/` — signed Proof of Intent generation and LangChain pre-tool
+  callback integration (Stage 6).
 - `demo.py` — a Context Ledger and Merkle-proof forensic demonstration.
 
 The module uses [rfc8785](https://pypi.org/project/rfc8785/), a dedicated RFC
@@ -159,3 +161,22 @@ The registry supports Ed25519 (`OKP`) and the Stage 3 ECDSA P-256 (`EC`) keys.
 X.509 certificate issuance is deferred: the `AgentKeyRecord` validity/revocation
 model is compatible with a future certificate/KMS-backed implementation, while
 JWK Sets cover the demo's public key-distribution needs.
+
+## Stage 6 Proof of Intent generator
+
+Stage 6 creates a signed PoI immediately before each LangChain tool call. It
+commits the verified user prompt, active system prompt, current Context Ledger
+Merkle root, exact tool payload, model ID, timestamp, and nonce. The callback
+requires `metadata={"session_id": ...}` and blocks execution if no verified
+session context exists for that ID.
+
+```bash
+.venv/bin/python -m pytest poi_generator/tests
+.venv/bin/python -m poi_generator.demo
+```
+
+The implementation targets `langchain-core` 1.5's
+`on_tool_start(serialized, input_str, *, run_id, parent_run_id, tags, metadata,
+inputs, **kwargs)` callback shape. Agent Ed25519 keys are demo-persisted in the
+ignored `.aor_agent_keys/` directory and registered in Stage 5 on startup. In
+production, agent private keys belong in KMS/HSM custody instead.
