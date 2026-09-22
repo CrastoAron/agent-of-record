@@ -33,12 +33,12 @@ timestamp anchoring is supported through the TSA integration.
 
 - `crypto_core/` — JCS canonicalization, SHA3-256 hashing, and signing helpers.
 - `ledger_core/` — append-only context ledger and Merkle tree/proof utilities.
-- `frontend/` — Vite/React client-side signing demonstration.
+- `frontend/` — Unified Vite/React application combining client signing and verification portal.
 - `verifier_service/` — FastAPI boundary that rejects invalid or replayed user envelopes.
 - `key_registry/` — SQLite-backed public-key registry and JWK Set publication.
 - `poi_generator/` — signed Proof of Intent creation and LangChain callbacks.
 - `action_executor/` — dry-run or SMTP email execution with AoR proof headers.
-- `verification_portal/` — verification API and React forensic-trace interface.
+- `verification_portal/` — backend verification API for forensic traces.
 - `tsa_anchor/` — RFC 3161 timestamp request, storage, and verification support.
 - `e2e_tests/` — full-pipeline injection, tamper, replay, key, and timestamp tests.
 - `demo.py` — standalone ledger and Merkle-proof demonstration.
@@ -122,38 +122,44 @@ when network access is available:
 
 ## Start the Services
 
-### Signed-prompt verifier
+### Unified backend
 
 ```bash
-.venv/bin/python -m uvicorn verifier_service.main:app --reload
+.venv/bin/python run_backend.py
 ```
 
-Open the API documentation at <http://127.0.0.1:8000/docs>. Active public keys
-are published at <http://127.0.0.1:8000/.well-known/jwks.json>.
+The single backend serves the signed-prompt verifier, PoI/action executor, and
+verification portal. Open the API documentation at
+<http://127.0.0.1:8000/docs>. Active public keys are published at
+<http://127.0.0.1:8000/.well-known/jwks.json>.
 
-### Verification Portal API
+Important backend endpoints:
 
-```bash
-.venv/bin/python -m uvicorn verification_portal.backend.main:app --reload --port 8001
-```
+- `POST /api/prompt` — verify a browser-signed prompt.
+- `POST /api/generate-artifact` — create and persist a dry-run `.eml` action.
+- `POST /verify` — verify an uploaded `.eml` artifact.
+- `GET /verify/{action_id}` — verify a generated action by ID.
+- `GET /api/operations` — inspect backend operations shown by the frontend.
+- `POST /api/anchor` — attempt RFC 3161 anchoring of the current ledger root.
+- `GET /api/anchors` — inspect timestamp anchor attempts.
 
 The API accepts an `.eml` artifact or an `action_id` and returns a verification
 trace containing six links: PoI extraction, hash recomputation, agent
-signature, user signature, Merkle-root matching, and timestamp anchoring.
+signature, user signature, Merkle-root matching, and timestamp anchoring. The
+verifier and portal intentionally share one process so generated evidence is
+available to the portal immediately.
 
-### Verification Portal UI
+### Frontend UI (Signing & Verification Portal)
 
 In another terminal:
 
 ```bash
-cd verification_portal/frontend
+cd frontend
 npm install
 npm run dev
 ```
 
-Open <http://127.0.0.1:5174> to upload an `.eml` file or verify an action ID.
-The separate client signing demo is documented in
-[frontend/README.md](frontend/README.md).
+Open <http://127.0.0.1:5173> to access the unified web application. You can switch between **Client Signing** and **Verification Portal** views using the top navigation bar.
 
 ## Security Behavior
 

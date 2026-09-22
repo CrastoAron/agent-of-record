@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import asyncio
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import Mock
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -205,3 +206,84 @@ def test_api_accepts_the_stage3_p256_jwk_registration_format() -> None:
 
     assert registration.status_code == 201
     assert verified.status_code == 200
+
+
+def test_api_exposes_backend_operations_for_the_frontend() -> None:
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    app = create_app()
+    envelope = _make_envelope(private_key)
+    public_key_b64 = base64.b64encode(
+        private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    ).decode("ascii")
+
+    _request(app, "POST", "/register-pubkey", {
+        "pubkey_id": envelope.pubkey_id,
+        "public_key_b64": public_key_b64,
+    })
+    verify_response = _request(app, "POST", "/api/prompt", envelope.model_dump())
+    operations_response = _request(app, "GET", "/api/operations")
+
+    assert verify_response.status_code == 200
+    assert operations_response.status_code == 200
+    payload = operations_response.json()
+    assert payload["count"] >= 2
+    assert any(item["operation"] == "verify_prompt" for item in payload["operations"])
+
+
+def test_api_generates_a_verifiable_eml_artifact() -> None:
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    app = create_app()
+    envelope = _make_envelope(private_key)
+    public_key_b64 = base64.b64encode(
+        private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    ).decode("ascii")
+
+    _request(app, "POST", "/register-pubkey", {
+        "pubkey_id": envelope.pubkey_id,
+        "public_key_b64": public_key_b64,
+    })
+    verify_response = _request(app, "POST", "/api/prompt", envelope.model_dump())
+    assert verify_response.status_code == 200
+
+    artifact_response = _request(app, "POST", "/api/generate-artifact", envelope.model_dump())
+    payload = artifact_response.json()
+
+    assert artifact_response.status_code == 200
+    assert payload["status"] == "artifact_generated"
+    assert payload["action_id"]
+    assert payload["eml_path"]
+    assert Path(payload["eml_path"]).exists()
+
+
+def test_generated_artifact_can_be_verified_by_action_id_and_upload() -> None:
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    app = create_app()
+    envelope = _make_envelope(private_key)
+    public_key_b64 = base64.b64encode(
+        private_key.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    ).decode("ascii")
+
+    _request(app, "POST", "/register-pubkey", {
+        "pubkey_id": envelope.pubkey_id,
+        "public_key_b64": public_key_b64,
+    })
+    _request(app, "POST", "/api/prompt", envelope.model_dump())
+    artifact_response = _request(app, "POST", "/api/generate-artifact", envelope.model_dump())
+    artifact = artifact_response.json()
+
+    action_response = _request(app, "GET", f"/verify/{artifact['action_id']}")
+    assert action_response.status_code == 200
+    trace = action_response.json()
+    assert trace["overall_valid"] is True, [
+        (link["link_name"], link["status"], link["detail"])
+        for link in trace["links"]
+    ]

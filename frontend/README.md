@@ -1,7 +1,9 @@
-# AoR client signing (Stage 3)
+# Agent-of-Record Unified Frontend
 
-This Vite/React app performs the user-side AoR signing flow entirely in the
-browser. There are no backend calls in this stage.
+This Vite/React application combines both client-side prompt signing and the forensic trace verification portal into a single interface.
+
+- **Client-Side Signing**: Generates a session-only Web Crypto key, JCS canonicalizes prompt payloads (RFC 8785), hashes via SHA3-256, and produces signed envelopes.
+- **Verification Portal**: Uploads `.eml` artifacts or queries Action IDs to verify end-to-end provenance traces against the backend verification service.
 
 ## Setup and run
 
