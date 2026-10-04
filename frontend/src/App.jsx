@@ -1,53 +1,60 @@
-import { useState } from "react";
-import ClientSigning from "./components/ClientSigning";
-import VerificationPortal from "./components/VerificationPortal";
+import { AuthProvider } from "./context/AuthContext";
+import { RouterProvider, useRouter } from "./context/RouterContext";
+import Navbar from "./components/Navbar";
+import LandingPage from "./components/LandingPage";
+import LoginPage from "./components/LoginPage";
+import SignupPage from "./components/SignupPage";
+import DashboardPage from "./components/DashboardPage";
+import ProtectedRoute from "./components/ProtectedRoute";
 import "./styles.css";
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState("signing");
+function AppContent() {
+  const { currentPath } = useRouter();
+
+  const renderView = () => {
+    switch (currentPath) {
+      case "/":
+        return <LandingPage />;
+      case "/login":
+        return <LoginPage />;
+      case "/signup":
+        return <SignupPage />;
+      case "/dashboard":
+        return (
+          <ProtectedRoute>
+            <DashboardPage />
+          </ProtectedRoute>
+        );
+      default:
+        return <LandingPage />;
+    }
+  };
+
+  const isDashboard = currentPath === "/dashboard";
 
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <div className="header-container">
-          <div className="brand">
-            <span className="logo-icon">🛡️</span>
-            <div className="brand-text">
-              <span className="brand-name">Agent-of-Record</span>
-              <span className="brand-tagline">Cryptographic Intent & Evidence Provenance</span>
-            </div>
+    <div className={`app-shell ${isDashboard ? "dashboard-mode" : ""}`}>
+      <Navbar />
+      <main className={`main-content ${isDashboard ? "dashboard-main" : ""}`}>{renderView()}</main>
+      {!isDashboard && (
+        <footer className="app-footer">
+          <div className="footer-container">
+            <p>
+              Agent-of-Record (AoR) Protocol · Mock Authentication System · Built with React & CSS
+            </p>
           </div>
-          <nav className="nav-tabs" aria-label="Main Navigation">
-            <button
-              type="button"
-              className={`tab-btn ${activeTab === "signing" ? "active" : ""}`}
-              onClick={() => setActiveTab("signing")}
-            >
-              <span className="tab-icon">✍️</span> Client Signing
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${activeTab === "portal" ? "active" : ""}`}
-              onClick={() => setActiveTab("portal")}
-            >
-              <span className="tab-icon">🔍</span> Verification Portal
-            </button>
-          </nav>
-        </div>
-      </header>
-
-      <main className="main-content">
-        {activeTab === "signing" && <ClientSigning />}
-        {activeTab === "portal" && <VerificationPortal />}
-      </main>
-
-      <footer className="app-footer">
-        <div className="footer-container">
-          <p>
-            Agent-of-Record (AoR) Protocol · RFC 8785 (JCS) · SHA3-256 · ECDSA P-256 / Ed25519
-          </p>
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <RouterProvider>
+        <AppContent />
+      </RouterProvider>
+    </AuthProvider>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import TraceView from "./TraceView";
+import { authService } from "../services/authService.js";
 
 const API_BASE = import.meta.env.VITE_PORTAL_API_URL ?? "http://127.0.0.1:8000";
 
@@ -24,11 +25,11 @@ export default function VerificationPortal() {
       if (file) {
         const form = new FormData();
         form.append("file", file);
-        response = await fetch(`${API_BASE}/verify`, { method: "POST", body: form });
+        response = await fetch(`${API_BASE}/verify`, { method: "POST", headers: authService.getAuthHeaders(), body: form });
       } else {
         response = await fetch(`${API_BASE}/verify`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authService.getAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ action_id: actionId.trim() }),
         });
       }
@@ -77,6 +78,8 @@ export default function VerificationPortal() {
           <label htmlFor="action-id-input">Action ID</label>
           <input
             id="action-id-input"
+            type="text"
+            className="form-control"
             value={actionId}
             placeholder="<...@aor.local>"
             onChange={(event) => {

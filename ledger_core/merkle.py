@@ -36,6 +36,16 @@ class MerkleTree:
         """Return the current Merkle root."""
         return self._levels[-1][0]
 
+    def levels(self) -> list[list[bytes]]:
+        """Return the tree levels from leaves to root.
+
+        The returned levels contain the nodes used to build the tree. Odd
+        levels are not padded here because the duplicate is an implementation
+        detail of parent construction; presentation code can add that marker
+        when it needs to visualize the duplicate node.
+        """
+        return [list(level) for level in self._levels]
+
     def get_proof(self, entry_id: int) -> list[bytes]:
         """Return an ordered inclusion proof for the supplied ledger entry."""
         try:

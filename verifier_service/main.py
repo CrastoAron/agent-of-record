@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ from action_executor.smtp_action import SMTPConfig
 from key_registry import KeyRegistry
 from key_registry.jwks import import_jwk
 from key_registry.models import RegisterKeyRequest, RevokeKeyRequest
+from key_registry.storage import SQLiteKeyStorage
 
 from ledger_core import Ledger
 from poi_generator import build_poi, sign_poi
@@ -26,6 +28,7 @@ from verification_portal.backend.verify_pipeline import VerificationPipeline
 from tsa_anchor.anchor_scheduler import AnchorStore, anchor_current_root
 
 from .models import PubkeyRegistration, SignedEnvelope
+from .database import SQLiteDatabase
 from .nonce_store import NonceStore
 from .pubkey_store import PubkeyStore
 from .verifier import SignatureVerifier
@@ -66,11 +69,25 @@ def _operation_entry(operation: str, status: str, detail: str, *, pubkey_id: str
     }
 
 
+def _bearer_token(request: Request) -> str | None:
+    value = request.headers.get("authorization", "")
+    scheme, _, token = value.partition(" ")
+    return token.strip() if scheme.lower() == "bearer" and token.strip() else None
+
+
+def _request_user(request: Request, *, required: bool = False) -> dict[str, str] | None:
+    user = request.app.state.database.user_from_token(_bearer_token(request))
+    if required and user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication_required")
+    return user
+
+
 def create_app(
     pubkey_store: PubkeyStore | KeyRegistry | None = None,
     nonce_store: NonceStore | None = None,
     on_verified: Callable[[SignedEnvelope], dict[str, str]] | None = None,
     key_registry: KeyRegistry | None = None,
+    database_path: str | Path | None = None,
 ) -> FastAPI:
     """Build an app with injectable stores/handler for isolated tests."""
     service = FastAPI(title="AoR Signature Verifier", version="0.1.0")
@@ -81,9 +98,11 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    database_location = str(database_path) if database_path is not None else ":memory:"
+    service.state.database = SQLiteDatabase(database_location)
     # The default is now the Stage 5 registry. A legacy PubkeyStore remains
     # injectable for focused Stage 4 tests through the same get_pubkey API.
-    service.state.pubkey_store = key_registry or pubkey_store or KeyRegistry()
+    service.state.pubkey_store = key_registry or pubkey_store or KeyRegistry(SQLiteKeyStorage(database_location))
     service.state.key_registry = (
         service.state.pubkey_store if isinstance(service.state.pubkey_store, KeyRegistry) else None
     )
@@ -97,6 +116,45 @@ def create_app(
     service.state.anchor_store = AnchorStore()
     service.state.outbox_dir = Path(__file__).resolve().parents[1] / ".aor_outbox"
     service.state.agent_keypair = load_agent_keypair("demo-agent")
+
+    @service.post("/api/auth/signup", status_code=status.HTTP_201_CREATED)
+    async def auth_signup(payload: dict[str, str], request: Request) -> dict[str, object]:
+        try:
+            user = request.app.state.database.create_user(
+                payload.get("name", ""), payload.get("email", ""), payload.get("password", "")
+            )
+            token = request.app.state.database.create_session(user["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return {"user": user, "token": token}
+
+    @service.post("/api/auth/login")
+    async def auth_login(payload: dict[str, str], request: Request) -> dict[str, object]:
+        user = request.app.state.database.authenticate(payload.get("email", ""), payload.get("password", ""))
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password.")
+        return {"user": user, "token": request.app.state.database.create_session(user["id"])}
+
+    @service.get("/api/auth/me")
+    async def auth_me(request: Request) -> dict[str, object]:
+        user = _request_user(request, required=True)
+        return {"user": user}
+
+    @service.post("/api/auth/logout")
+    async def auth_logout(request: Request) -> dict[str, str]:
+        request.app.state.database.revoke_session(_bearer_token(request))
+        return {"status": "signed_out"}
+
+    @service.post("/api/auth/reset-password")
+    async def auth_reset_password(payload: dict[str, str], request: Request) -> dict[str, str]:
+        # A real email delivery provider is intentionally outside this stage.
+        # Always return the same response to avoid account enumeration.
+        return {"status": "accepted"}
+
+    @service.get("/api/prompts")
+    async def list_prompt_records(request: Request) -> dict[str, object]:
+        user = _request_user(request, required=True)
+        return {"prompts": request.app.state.database.list_prompts(user["id"])}
 
     @service.post("/register-pubkey", status_code=status.HTTP_201_CREATED)
     async def register_pubkey(registration: PubkeyRegistration, request: Request) -> dict[str, str]:
@@ -233,7 +291,10 @@ def create_app(
             uploaded = form.get("file")
             if uploaded is None or not hasattr(uploaded, "read"):
                 raise HTTPException(status_code=422, detail="provide an .eml file")
-            return pipeline.run_verification(await uploaded.read(), None)
+            trace = pipeline.run_verification(await uploaded.read(), None)
+            if trace.action_id:
+                request.app.state.database.update_verification(trace.action_id, trace.model_dump(mode="json"))
+            return trace
         try:
             body = await request.json()
             action_id = str(body["action_id"])
@@ -242,7 +303,9 @@ def create_app(
                 status_code=422,
                 detail="provide JSON {action_id: ...} or an .eml upload",
             ) from exc
-        return pipeline.run_verification(None, action_id)
+        trace = pipeline.run_verification(None, action_id)
+        request.app.state.database.update_verification(action_id, trace.model_dump(mode="json"))
+        return trace
 
     @service.get("/verify/{action_id}")
     async def verify_by_action_id(action_id: str, request: Request):
@@ -251,10 +314,15 @@ def create_app(
             request.app.state.artifact_store,
             request.app.state.anchor_store,
         )
-        return pipeline.run_verification(None, action_id)
+        trace = pipeline.run_verification(None, action_id)
+        request.app.state.database.update_verification(action_id, trace.model_dump(mode="json"))
+        return trace
 
     @service.post("/api/prompt")
     async def verify_prompt(envelope: SignedEnvelope, request: Request) -> dict[str, str]:
+        authenticated_user = _request_user(request)
+        if authenticated_user is not None and envelope.user_id != authenticated_user["id"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="prompt_user_mismatch")
         result = request.app.state.verifier.verify_envelope(envelope)
         if not result.valid:
             request.app.state.operations.insert(
@@ -289,6 +357,9 @@ def create_app(
 
     @service.post("/api/generate-artifact")
     async def generate_artifact(envelope: SignedEnvelope, request: Request) -> dict[str, str | None]:
+        authenticated_user = _request_user(request)
+        if authenticated_user is not None and envelope.user_id != authenticated_user["id"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="prompt_user_mismatch")
         verified_before = any(item == envelope.model_dump() for item in request.app.state.verified_envelopes)
         if not verified_before:
             result = request.app.state.verifier.verify_envelope(envelope)
@@ -336,6 +407,13 @@ def create_app(
                 eml_bytes=artifact_path.read_bytes(),
             )
         )
+        record_user_id = authenticated_user["id"] if authenticated_user else envelope.user_id
+        request.app.state.database.save_prompt(
+            envelope,
+            user_id=record_user_id,
+            action_id=action_result.action_id,
+            eml_path=str(artifact_path.resolve()),
+        )
         request.app.state.operations.insert(
             0,
             _operation_entry(
@@ -356,4 +434,4 @@ def create_app(
     return service
 
 
-app = create_app()
+app = create_app(database_path=os.getenv("AOR_DATABASE_PATH", str(Path(__file__).resolve().parents[1] / "aor_data.sqlite3")))

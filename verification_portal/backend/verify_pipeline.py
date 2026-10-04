@@ -13,14 +13,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from action_executor.poi_encoding import decode_poi_header
 from crypto_core import hash_payload, verify
 from key_registry import KeyRegistry
-from ledger_core import Ledger, LedgerEntry, build_merkle_tree, verify_merkle_proof
+from ledger_core import Ledger, LedgerEntry, MerkleTree, build_merkle_tree, verify_merkle_proof
 from poi_generator import verify_poi_signature
 from poi_generator.models import ProofOfIntent
 from tsa_anchor.anchor_scheduler import AnchorStore
 
 from .eml_parser import parse_eml
 from .evidence_store import ActionEvidence, ActionEvidenceStore
-from .models import LinkResult, VerificationTrace
+from .models import LinkResult, MerkleLevelView, MerkleNodeView, MerkleTreeView, VerificationTrace
 from .tsa_verify import verify_timestamp_token
 
 
@@ -63,6 +63,54 @@ def _recomputed_entries(entries: list[LedgerEntry]) -> list[LedgerEntry]:
 
 def _unavailable(link_name: str, detail: str) -> LinkResult:
     return LinkResult(link_name=link_name, passed=False, status="unavailable", detail=detail)
+
+
+def _merkle_tree_view(
+    tree: MerkleTree,
+    entries: list[LedgerEntry],
+    *,
+    signed_root: str | None = None,
+    proof_entry_id: int | None = None,
+    proof_valid: bool | None = None,
+) -> MerkleTreeView:
+    """Serialize the recomputed tree for the UI without exposing leaf content."""
+    entry_ids = [entry.entry_id for entry in entries]
+    levels: list[MerkleLevelView] = []
+    tree_levels = tree.levels()
+
+    for level_index, hashes in enumerate(tree_levels):
+        display_hashes = list(hashes)
+        duplicate_index: int | None = None
+        if level_index < len(tree_levels) - 1 and len(display_hashes) % 2:
+            duplicate_index = len(display_hashes)
+            display_hashes.append(display_hashes[-1])
+
+        nodes = [
+            MerkleNodeView(
+                hash=digest.hex(),
+                entry_id=entry_ids[min(index, len(entry_ids) - 1)] if level_index == 0 else None,
+                duplicated=index == duplicate_index,
+            )
+            for index, digest in enumerate(display_hashes)
+        ]
+        levels.append(
+            MerkleLevelView(
+                level=level_index,
+                label="Leaves" if level_index == 0 else ("Root" if level_index == len(tree_levels) - 1 else f"Level {level_index}"),
+                nodes=nodes,
+            )
+        )
+
+    root = tree.root().hex()
+    return MerkleTreeView(
+        root=root,
+        signed_root=signed_root,
+        root_matches_signed=(root == signed_root) if signed_root else None,
+        leaf_count=len(entries),
+        proof_entry_id=proof_entry_id,
+        proof_valid=proof_valid,
+        levels=levels,
+    )
 
 
 class VerificationPipeline:
@@ -117,6 +165,8 @@ class VerificationPipeline:
         # Step 2: independently recompute every content commitment.
         recomputed_root: bytes | None = None
         recomputed_ledger_entries: list[LedgerEntry] = []
+        recomputed_tree: MerkleTree | None = None
+        proof_valid: bool | None = None
         if poi is None or evidence is None:
             missing = "PoI" if poi is None else "captured action evidence"
             links.append(_unavailable("hash_recomputation", f"unable to recompute hashes: {missing} unavailable"))
@@ -144,7 +194,8 @@ class VerificationPipeline:
             live_entries = evidence.ledger.all_entries()[: evidence.ledger_entry_count_at_action]
             try:
                 recomputed_ledger_entries = _recomputed_entries(live_entries)
-                recomputed_root = build_merkle_tree(recomputed_ledger_entries).root()
+                recomputed_tree = build_merkle_tree(recomputed_ledger_entries)
+                recomputed_root = recomputed_tree.root()
                 if recomputed_root.hex() != poi.context_root:
                     mismatches.append("context_root")
             except Exception as exc:
@@ -191,7 +242,7 @@ class VerificationPipeline:
             links.append(_unavailable("merkle_root_match", "unable to check: ledger evidence unavailable"))
         else:
             try:
-                tree = build_merkle_tree(recomputed_ledger_entries)
+                tree = recomputed_tree or build_merkle_tree(recomputed_ledger_entries)
                 proof = tree.get_proof(recomputed_ledger_entries[0].entry_id)
                 proof_valid = verify_merkle_proof(recomputed_ledger_entries[0].leaf_hash, proof, tree.root())
                 chain_break = evidence.ledger.first_invalid_entry_id()
@@ -221,7 +272,24 @@ class VerificationPipeline:
             links.append(LinkResult(link_name="timestamp_anchor", passed=timestamp_result.pending or timestamp_result.verified, status="pending" if timestamp_result.pending else ("passed" if timestamp_result.verified else "failed"), detail=timestamp_result.detail))
 
         overall_valid = all(link.passed for link in links)
-        return VerificationTrace(action_id=action_id, overall_valid=overall_valid, links=links, timestamp_verified=bool(links and links[-1].status == "passed"))
+        merkle_tree = (
+            _merkle_tree_view(
+                recomputed_tree,
+                recomputed_ledger_entries,
+                signed_root=poi.context_root if poi is not None else None,
+                proof_entry_id=recomputed_ledger_entries[0].entry_id if recomputed_ledger_entries else None,
+                proof_valid=proof_valid,
+            )
+            if recomputed_tree is not None and recomputed_ledger_entries
+            else None
+        )
+        return VerificationTrace(
+            action_id=action_id,
+            overall_valid=overall_valid,
+            links=links,
+            timestamp_verified=bool(links and links[-1].status == "passed"),
+            merkle_tree=merkle_tree,
+        )
 
 
 def run_verification(

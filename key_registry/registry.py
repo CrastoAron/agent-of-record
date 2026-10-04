@@ -75,6 +75,11 @@ class KeyRegistry:
 
     def register_pubkey(self, pubkey_id: str, public_key_bytes: bytes) -> None:
         """Stage 4 compatibility shim; prefer ``register_key`` for new callers."""
+        existing = self._storage.get_key_by_id(pubkey_id)
+        if existing is not None:
+            if existing.public_key_bytes == public_key_bytes and self._is_active(existing, self._now()):
+                return
+            raise ValueError(f"pubkey_id already registered: {pubkey_id}")
         self.register_key(
             agent_id="unassigned",
             pubkey_id=pubkey_id,

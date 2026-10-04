@@ -1,6 +1,9 @@
 # Agent-of-Record Unified Frontend
 
-This Vite/React application combines both client-side prompt signing and the forensic trace verification portal into a single interface.
+This Vite/React application combines account login, client-side prompt signing,
+artifact generation, prompt history, and the forensic trace verification portal
+into a single interface. Authentication and history are backed by the FastAPI
+SQLite database; the browser private signing key remains session-memory only.
 
 - **Client-Side Signing**: Generates a session-only Web Crypto key, JCS canonicalizes prompt payloads (RFC 8785), hashes via SHA3-256, and produces signed envelopes.
 - **Verification Portal**: Uploads `.eml` artifacts or queries Action IDs to verify end-to-end provenance traces against the backend verification service.
@@ -16,6 +19,16 @@ npm run dev
 Open the localhost URL printed by Vite. Web Crypto requires a secure context;
 Vite's localhost development origin satisfies that requirement. For deployed
 use, serve the app over HTTPS.
+
+Start the backend in a separate terminal before signing or logging in:
+
+```bash
+cd ..
+.venv/bin/python run_backend.py
+```
+
+The backend stores its SQLite database at `../aor_data.sqlite3`. The demo login
+shown on the landing page is `user@example.com` / `password123`.
 
 ## Cryptographic protocol
 

@@ -41,6 +41,8 @@ timestamp anchoring is supported through the TSA integration.
 - `verification_portal/` — backend verification API for forensic traces.
 - `tsa_anchor/` — RFC 3161 timestamp request, storage, and verification support.
 - `e2e_tests/` — full-pipeline injection, tamper, replay, key, and timestamp tests.
+- `verifier_service/database.py` — SQLite accounts, sessions, prompt history,
+  artifacts, and verification-result persistence.
 - `demo.py` — standalone ledger and Merkle-proof demonstration.
 
 ## Requirements
@@ -133,6 +135,12 @@ verification portal. Open the API documentation at
 <http://127.0.0.1:8000/docs>. Active public keys are published at
 <http://127.0.0.1:8000/.well-known/jwks.json>.
 
+The backend creates `aor_data.sqlite3` in the repository root by default (or
+uses `AOR_DATABASE_PATH` when set). It stores password hashes, expiring session
+tokens, prompt/action records, and verification traces. Private Web Crypto keys
+never enter SQLite. The existing demo account remains available after the first
+database creation: `user@example.com` / `password123`.
+
 Important backend endpoints:
 
 - `POST /api/prompt` — verify a browser-signed prompt.
@@ -142,6 +150,9 @@ Important backend endpoints:
 - `GET /api/operations` — inspect backend operations shown by the frontend.
 - `POST /api/anchor` — attempt RFC 3161 anchoring of the current ledger root.
 - `GET /api/anchors` — inspect timestamp anchor attempts.
+- `POST /api/auth/signup` and `POST /api/auth/login` — create/login SQLite-backed accounts.
+- `GET /api/auth/me` and `POST /api/auth/logout` — restore/revoke bearer sessions.
+- `GET /api/prompts` — list the authenticated user's saved prompt/action history.
 
 The API accepts an `.eml` artifact or an `action_id` and returns a verification
 trace containing six links: PoI extraction, hash recomputation, agent
@@ -159,7 +170,11 @@ npm install
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173> to access the unified web application. You can switch between **Client Signing** and **Verification Portal** views using the top navigation bar.
+Open <http://127.0.0.1:5173> to access the unified web application. After
+logging in, the dashboard provides **New Prompt**, **Verify Action**, and
+**History** tabs. New Prompt runs browser signing, backend verification, PoI
+generation, dry-run email creation, and portal verification; History reads the
+same records from SQLite.
 
 ## Security Behavior
 

@@ -15,6 +15,34 @@ class LinkResult(BaseModel):
     status: str = "passed"
 
 
+class MerkleNodeView(BaseModel):
+    """A presentation-safe Merkle node; content is never included."""
+
+    hash: str
+    entry_id: int | None = None
+    duplicated: bool = False
+
+
+class MerkleLevelView(BaseModel):
+    """One level of a Merkle tree, ordered from left to right."""
+
+    level: int
+    label: str
+    nodes: list[MerkleNodeView] = Field(default_factory=list)
+
+
+class MerkleTreeView(BaseModel):
+    """The recomputed tree data needed by the portal's tree visualization."""
+
+    root: str
+    signed_root: str | None = None
+    root_matches_signed: bool | None = None
+    leaf_count: int
+    proof_entry_id: int | None = None
+    proof_valid: bool | None = None
+    levels: list[MerkleLevelView] = Field(default_factory=list)
+
+
 class VerificationTrace(BaseModel):
     """A complete, forensic trace returned even when individual checks fail."""
 
@@ -22,3 +50,4 @@ class VerificationTrace(BaseModel):
     overall_valid: bool
     links: list[LinkResult] = Field(default_factory=list)
     timestamp_verified: bool = False
+    merkle_tree: MerkleTreeView | None = None

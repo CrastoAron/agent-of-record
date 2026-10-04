@@ -1,3 +1,5 @@
+import MerkleTreeView from "./MerkleTreeView";
+
 const symbolFor = (link) => (link.passed ? "✓" : "×");
 
 export default function TraceView({ trace }) {
@@ -25,6 +27,7 @@ export default function TraceView({ trace }) {
           </article>
         ))}
       </div>
+      <MerkleTreeView tree={trace.merkle_tree} />
     </section>
   );
 }
