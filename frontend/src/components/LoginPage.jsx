@@ -91,7 +91,7 @@ export default function LoginPage() {
               Email Address
             </label>
             <div className="input-wrapper">
-              <span className="input-prefix-icon" aria-hidden="true">✉️</span>
+              <span className="input-prefix-icon" aria-hidden="true"></span>
               <input
                 id="login-email"
                 type="email"
@@ -124,7 +124,7 @@ export default function LoginPage() {
             </div>
 
             <div className="input-wrapper">
-              <span className="input-prefix-icon" aria-hidden="true">🔒</span>
+              <span className="input-prefix-icon" aria-hidden="true"></span>
               <input
                 id="login-password"
                 type={showPassword ? "text" : "password"}

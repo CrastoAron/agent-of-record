@@ -5,6 +5,10 @@ artifact generation, prompt history, and the forensic trace verification portal
 into a single interface. Authentication and history are backed by the FastAPI
 SQLite database; the browser private signing key remains session-memory only.
 
+The chat currently uses the backend's deterministic structured demo agent. No
+external LLM or API key is required. AoR validates, signs, executes, and
+verifies the resulting action.
+
 - **Client-Side Signing**: Generates a session-only Web Crypto key, JCS canonicalizes prompt payloads (RFC 8785), hashes via SHA3-256, and produces signed envelopes.
 - **Verification Portal**: Uploads `.eml` artifacts or queries Action IDs to verify end-to-end provenance traces against the backend verification service.
 

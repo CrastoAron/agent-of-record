@@ -11,3 +11,6 @@ aor_data.sqlite3-*
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.env
+.env.*
+!.env.example

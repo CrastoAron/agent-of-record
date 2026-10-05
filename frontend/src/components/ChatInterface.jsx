@@ -333,6 +333,7 @@ export default function ChatInterface({
         artifactResult: null,
         portalTrace: null,
         backendOperations: [],
+        agentDraft: null,
       },
     };
 
@@ -499,12 +500,13 @@ export default function ChatInterface({
               return {
                 ...m,
                 status: "success",
-                completionText: `Action ${artData.action_id} executed successfully. Cryptographic proof and Merkle root verified.`,
+                completionText: `Prepared an email to ${artData.agent_draft?.to || "the requested recipient"}. Action ${artData.action_id} executed successfully. Cryptographic proof and Merkle root verified.`,
                 execution: {
                   ...m.execution,
                   actionId: artData.action_id,
                   backendResult: { registration: regData, verification: verData },
                   artifactResult: artData,
+                  agentDraft: artData.agent_draft || null,
                   portalTrace: traceData,
                   backendOperations: ops,
                   provenanceValid: true,

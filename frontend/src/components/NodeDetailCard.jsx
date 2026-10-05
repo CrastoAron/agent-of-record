@@ -173,7 +173,7 @@ export default function NodeDetailCard({ step, onClose, onViewTechnicalEvidence 
           .map((d) => (
             <div className="detail-prop-item" key={d.label}>
               <span className="prop-name">{d.label}:</span>
-              <span className="prop-val">{d.value}</span>
+              <span className="prop-val prop-val-break">{d.value}</span>
             </div>
           ))}
       </div>

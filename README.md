@@ -43,6 +43,8 @@ timestamp anchoring is supported through the TSA integration.
 - `e2e_tests/` — full-pipeline injection, tamper, replay, key, and timestamp tests.
 - `verifier_service/database.py` — SQLite accounts, sessions, prompt history,
   artifacts, and verification-result persistence.
+- `verifier_service/agent_runtime.py` — deterministic structured email planning
+  boundary; it proposes an action but never executes it directly.
 - `demo.py` — standalone ledger and Merkle-proof demonstration.
 
 ## Requirements
@@ -100,6 +102,19 @@ artifact to `.aor_outbox/` and includes:
 
 To send real mail, provide an explicit `SMTPConfig` with `dry_run=False` and a
 dedicated test SMTP account. Do not use production credentials in the demo.
+
+The chat flow currently uses a deterministic structured demo agent. It extracts
+an email recipient from the prompt, validates the resulting email action, and
+then sends that exact payload through PoI generation and the dry-run executor.
+No external LLM or API key is required:
+
+```bash
+AOR_LLM_MODE=mock .venv/bin/python run_backend.py
+```
+
+The provider integration is intentionally deferred. The structured action
+interface remains in place so an LLM can be added later without changing PoI or
+action execution.
 
 ## Run the Tests
 

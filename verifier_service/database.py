@@ -70,6 +70,10 @@ class SQLiteDatabase:
                     verification_json TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS action_evidence (
+                    action_id TEXT PRIMARY KEY,
+                    evidence_json TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_prompt_records_user
                     ON prompt_records(user_id, created_at DESC);
                 """
@@ -190,6 +194,22 @@ class SQLiteDatabase:
                 "UPDATE prompt_records SET verification_json = ? WHERE action_id = ?",
                 (json.dumps(verification, separators=(",", ":")), action_id),
             )
+
+    def save_action_evidence(self, action_id: str, evidence_json: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO action_evidence (action_id,evidence_json) VALUES (?,?) "
+                "ON CONFLICT(action_id) DO UPDATE SET evidence_json=excluded.evidence_json",
+                (action_id, evidence_json),
+            )
+
+    def get_action_evidence(self, action_id: str) -> str | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT evidence_json FROM action_evidence WHERE action_id = ?",
+                (action_id,),
+            ).fetchone()
+        return None if row is None else str(row["evidence_json"])
 
     def list_prompts(self, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
         rows = self._connection.execute(

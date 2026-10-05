@@ -29,6 +29,7 @@ from tsa_anchor.anchor_scheduler import AnchorStore, anchor_current_root
 
 from .models import PubkeyRegistration, SignedEnvelope
 from .database import SQLiteDatabase
+from .agent_runtime import AgentRuntime, AgentRuntimeError
 from .nonce_store import NonceStore
 from .pubkey_store import PubkeyStore
 from .verifier import SignatureVerifier
@@ -88,6 +89,7 @@ def create_app(
     on_verified: Callable[[SignedEnvelope], dict[str, str]] | None = None,
     key_registry: KeyRegistry | None = None,
     database_path: str | Path | None = None,
+    agent_runtime: AgentRuntime | None = None,
 ) -> FastAPI:
     """Build an app with injectable stores/handler for isolated tests."""
     service = FastAPI(title="AoR Signature Verifier", version="0.1.0")
@@ -109,10 +111,11 @@ def create_app(
     service.state.nonce_store = nonce_store or NonceStore()
     service.state.verifier = SignatureVerifier(service.state.pubkey_store, service.state.nonce_store)
     service.state.on_verified = on_verified or _default_verified_handler
+    service.state.agent_runtime = agent_runtime or AgentRuntime()
     service.state.operations: list[dict[str, str]] = []
     service.state.ledger = Ledger()
     service.state.verified_envelopes: list[dict[str, str]] = []
-    service.state.artifact_store = ActionEvidenceStore()
+    service.state.artifact_store = ActionEvidenceStore(service.state.database)
     service.state.anchor_store = AnchorStore()
     service.state.outbox_dir = Path(__file__).resolve().parents[1] / ".aor_outbox"
     service.state.agent_keypair = load_agent_keypair("demo-agent")
@@ -356,7 +359,7 @@ def create_app(
         return {"status": "verified", **downstream}
 
     @service.post("/api/generate-artifact")
-    async def generate_artifact(envelope: SignedEnvelope, request: Request) -> dict[str, str | None]:
+    async def generate_artifact(envelope: SignedEnvelope, request: Request) -> dict[str, object]:
         authenticated_user = _request_user(request)
         if authenticated_user is not None and envelope.user_id != authenticated_user["id"]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="prompt_user_mismatch")
@@ -377,14 +380,37 @@ def create_app(
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="verification_failed")
 
         system_prompt = "Only send approved project updates."
+        try:
+            # The demo planner is intentionally synchronous and deterministic.
+            # A queued worker can be introduced with the durable run model if
+            # an external provider is added later.
+            agent_action = request.app.state.agent_runtime.plan_email(envelope.prompt)
+        except AgentRuntimeError as exc:
+            request.app.state.operations.insert(
+                0,
+                _operation_entry("agent_plan", "failed", str(exc), pubkey_id=envelope.pubkey_id),
+            )
+            request.app.state.operations = request.app.state.operations[:50]
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+
         ledger = request.app.state.ledger
         ledger.append("system_prompt", {"text": system_prompt})
         ledger.append("user_prompt", {"text": envelope.prompt})
-        action_payload = {
-            "to": "bob@example.com",
-            "subject": "Approved project update",
-            "body": envelope.prompt,
-        }
+        ledger.append("agent_action", agent_action.action_payload())
+        action_payload = agent_action.action_payload()
+        request.app.state.operations.insert(
+            0,
+            _operation_entry(
+                "agent_plan",
+                "planned",
+                f"planned email to {agent_action.to}",
+                pubkey_id=envelope.pubkey_id,
+            ),
+        )
+        request.app.state.operations = request.app.state.operations[:50]
         agent_private_key, _ = request.app.state.agent_keypair
         register_agent_public_key("demo-agent", request.app.state.key_registry or request.app.state.pubkey_store, agent_private_key)
         poi = sign_poi(build_poi(envelope.prompt, system_prompt, ledger, action_payload, "demo-model"), agent_private_key)
@@ -426,6 +452,8 @@ def create_app(
         request.app.state.operations = request.app.state.operations[:50]
         return {
             "status": "artifact_generated",
+            "agent_mode": request.app.state.agent_runtime.mode,
+            "agent_draft": agent_action.model_dump(mode="json"),
             "action_id": action_result.action_id,
             "eml_path": str(artifact_path.resolve()),
             "message_id": action_result.action_id,

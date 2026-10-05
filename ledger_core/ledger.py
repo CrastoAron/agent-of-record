@@ -38,6 +38,23 @@ class Ledger:
     def __init__(self) -> None:
         self._entries: list[LedgerEntry] = []
 
+    @classmethod
+    def from_entries(cls, entries: list[LedgerEntry]) -> "Ledger":
+        """Restore a stored snapshot without replacing its committed hashes."""
+        ledger = cls()
+        ledger._entries = [
+            LedgerEntry(
+                entry_id=entry.entry_id,
+                entry_type=entry.entry_type,
+                content=deepcopy(entry.content),
+                timestamp=entry.timestamp,
+                prev_hash=bytes(entry.prev_hash),
+                leaf_hash=bytes(entry.leaf_hash),
+            )
+            for entry in entries
+        ]
+        return ledger
+
     @staticmethod
     def _leaf_material(content: dict[str, Any], prev_hash: bytes) -> dict[str, Any]:
         """Return the canonical payload whose hash commits a ledger leaf."""

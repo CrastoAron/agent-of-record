@@ -256,6 +256,9 @@ def test_api_generates_a_verifiable_eml_artifact() -> None:
 
     assert artifact_response.status_code == 200
     assert payload["status"] == "artifact_generated"
+    assert payload["agent_mode"] == "mock"
+    assert payload["agent_draft"]["action_type"] == "email"
+    assert payload["agent_draft"]["to"] == "bob@example.com"
     assert payload["action_id"]
     assert payload["eml_path"]
     assert Path(payload["eml_path"]).exists()

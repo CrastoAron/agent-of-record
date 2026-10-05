@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from cryptography.hazmat.primitives import hashes, serialization
@@ -63,7 +64,8 @@ def test_auth_logout_revokes_session(tmp_path):
 
 
 def test_authenticated_prompt_is_persisted_with_artifact_and_trace(tmp_path):
-    app = create_app(database_path=tmp_path / "aor.sqlite3")
+    database_path = tmp_path / "aor.sqlite3"
+    app = create_app(database_path=database_path)
     signup = asyncio.run(_request(app, "POST", "/api/auth/signup", payload={
         "name": "Prompt Owner", "email": "owner@example.com", "password": "password123",
     }))
@@ -104,3 +106,23 @@ def test_authenticated_prompt_is_persisted_with_artifact_and_trace(tmp_path):
     assert history.status_code == 200
     assert history.json()["prompts"][0]["action_id"] == action_id
     assert history.json()["prompts"][0]["verification"]["overall_valid"] is True
+
+    restored_app = create_app(database_path=database_path)
+    restored_trace = asyncio.run(_request(restored_app, "GET", f"/verify/{action_id}", token=token))
+    artifact_bytes = Path(artifact.json()["eml_path"]).read_bytes()
+
+    async def verify_uploaded_artifact():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=restored_app), base_url="http://test"
+        ) as client:
+            return await client.post(
+                "/verify",
+                files={"file": ("action.eml", artifact_bytes, "message/rfc822")},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    uploaded_trace = asyncio.run(verify_uploaded_artifact())
+    assert restored_trace.status_code == 200
+    assert restored_trace.json()["overall_valid"] is True
+    assert uploaded_trace.status_code == 200
+    assert uploaded_trace.json()["overall_valid"] is True

@@ -63,6 +63,18 @@ export default function ChatMessageItem({ message, userName = "User" }) {
           </div>
         )}
 
+        {execution.agentDraft && (
+          <div className="agent-draft-preview">
+            <div className="agent-draft-header">
+              <strong>Agent email draft</strong>
+              <span className="status-badge pass">validated</span>
+            </div>
+            <div className="agent-draft-row"><span>To</span><code>{execution.agentDraft.to}</code></div>
+            <div className="agent-draft-row"><span>Subject</span><span>{execution.agentDraft.subject}</span></div>
+            <div className="agent-draft-body">{execution.agentDraft.body}</div>
+          </div>
+        )}
+
         {/* Attached Execution Pipeline Container */}
         {execution && steps.length > 0 && (
           <div className="message-execution-attachment">
