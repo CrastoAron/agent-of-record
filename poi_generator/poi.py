@@ -26,6 +26,11 @@ def build_poi(
     ledger: Ledger,
     action_payload: dict[str, Any],
     model_id: str,
+    *,
+    agent_type: str | None = None,
+    agent_id: str | None = None,
+    action_type: str | None = None,
+    policy_decision: str | None = None,
 ) -> ProofOfIntent:
     """Create an unsigned PoI immediately before a tool invocation.
 
@@ -45,6 +50,10 @@ def build_poi(
         model_id=model_id,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         nonce=str(uuid4()),
+        agent_type=agent_type,
+        agent_id=agent_id,
+        action_type=action_type,
+        policy_decision=policy_decision,
     )
 
 

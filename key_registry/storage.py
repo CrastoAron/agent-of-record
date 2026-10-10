@@ -30,6 +30,7 @@ class SQLiteKeyStorage:
                 CREATE TABLE IF NOT EXISTS agent_keys (
                     pubkey_id TEXT PRIMARY KEY,
                     agent_id TEXT NOT NULL,
+                    agent_type TEXT,
                     public_key_bytes BLOB NOT NULL,
                     algorithm TEXT NOT NULL,
                     valid_from TEXT NOT NULL,
@@ -39,11 +40,18 @@ class SQLiteKeyStorage:
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(agent_keys)").fetchall()
+            }
+            if "agent_type" not in columns:
+                self._connection.execute("ALTER TABLE agent_keys ADD COLUMN agent_type TEXT")
 
     @staticmethod
     def _record_from_row(row: sqlite3.Row) -> AgentKeyRecord:
         return AgentKeyRecord(
             agent_id=row["agent_id"],
+            agent_type=row["agent_type"],
             pubkey_id=row["pubkey_id"],
             public_key_bytes=row["public_key_bytes"],
             algorithm=row["algorithm"],
@@ -60,13 +68,14 @@ class SQLiteKeyStorage:
                 self._connection.execute(
                     """
                     INSERT INTO agent_keys
-                    (pubkey_id, agent_id, public_key_bytes, algorithm, valid_from,
+                    (pubkey_id, agent_id, agent_type, public_key_bytes, algorithm, valid_from,
                      valid_until, revoked, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record.pubkey_id,
                         record.agent_id,
+                        record.agent_type,
                         record.public_key_bytes,
                         record.algorithm,
                         _timestamp_to_storage(record.valid_from),

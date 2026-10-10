@@ -49,7 +49,7 @@ export default function VerificationPortal() {
       <h1>Verification Portal</h1>
       <p className="intro">
         Verify the signed chain from user intent through execution. Upload an executed <code>.eml</code> artifact
-        or lookup an Action ID against the proof ledger.
+        or lookup an Action ID against the proof ledger, including structured file-agent actions.
       </p>
 
       <form onSubmit={verify} className="verification-form">

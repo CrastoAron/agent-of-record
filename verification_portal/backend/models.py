@@ -47,6 +47,10 @@ class VerificationTrace(BaseModel):
     """A complete, forensic trace returned even when individual checks fail."""
 
     action_id: str | None = None
+    agent_type: str | None = None
+    agent_id: str | None = None
+    action_type: str | None = None
+    policy_decision: str | None = None
     overall_valid: bool
     links: list[LinkResult] = Field(default_factory=list)
     timestamp_verified: bool = False

@@ -151,7 +151,12 @@ class VerificationPipeline:
                 parsed = parse_eml(evidence.eml_bytes)
             except Exception as exc:
                 links.append(LinkResult(link_name="poi_extraction", passed=False, status="failed", detail=f"stored .eml is invalid: {exc}"))
-        if not links:
+        if not links and eml_bytes is None and evidence is not None and evidence.poi is not None:
+            poi = evidence.poi
+            if evidence.action_payload is not None:
+                parsed["action_payload"] = evidence.action_payload
+            links.append(LinkResult(link_name="poi_extraction", passed=True, detail="signed PoI loaded from structured action evidence"))
+        elif not links:
             header = parsed.get("poi_header")
             if not header:
                 links.append(LinkResult(link_name="poi_extraction", passed=False, status="failed", detail="X-AoR-Proof-of-Intent header is missing"))
@@ -182,7 +187,10 @@ class VerificationPipeline:
                     mismatches.append("action_payload_hash")
             else:
                 # Action-ID verification uses the exact stored artifact when available.
-                if evidence.eml_bytes is None:
+                if evidence.action_payload is not None:
+                    if hash_payload(evidence.action_payload).hex() != poi.action_payload_hash:
+                        mismatches.append("action_payload_hash")
+                elif evidence.eml_bytes is None:
                     mismatches.append("action_payload_hash (no stored .eml)")
                 else:
                     try:
@@ -213,6 +221,29 @@ class VerificationPipeline:
             if agent_bytes is None:
                 links.append(LinkResult(link_name="agent_signature", passed=False, status="failed", detail="agent public key is unknown, expired, or currently revoked; this current trust failure alone does not prove the historical action was fraudulent"))
             else:
+                identity_errors: list[str] = []
+                get_key_record = getattr(self._key_registry, "get_key_record", None)
+                key_record = get_key_record(poi.agent_pubkey_id or "") if callable(get_key_record) else None
+                if key_record is not None and poi.agent_id is not None and key_record.agent_id != poi.agent_id:
+                    identity_errors.append(
+                        f"agent_id_mismatch (PoI claims {poi.agent_id!r}, key belongs to {key_record.agent_id!r})"
+                    )
+                if key_record is not None and poi.agent_type is not None and key_record.agent_type != poi.agent_type:
+                    identity_errors.append(
+                        f"agent_type_mismatch (PoI claims {poi.agent_type!r}, key belongs to {key_record.agent_type!r})"
+                    )
+                if poi.action_type is not None and evidence.action_type is not None and poi.action_type != evidence.action_type:
+                    identity_errors.append(
+                        f"action_type_mismatch (PoI claims {poi.action_type!r}, evidence claims {evidence.action_type!r})"
+                    )
+                elif poi.action_type is not None and evidence.action_type is None and (eml_bytes is not None or evidence.eml_bytes is not None) and poi.action_type != "email":
+                    identity_errors.append(
+                        f"action_type_mismatch (email artifact cannot claim {poi.action_type!r})"
+                    )
+                if poi.policy_decision is not None and poi.policy_decision != "allow":
+                    identity_errors.append(
+                        f"policy_decision_rejected (PoI contains {poi.policy_decision!r})"
+                    )
                 try:
                     valid_agent_signature = verify_poi_signature(poi, _load_public_key(agent_bytes))
                 except Exception as exc:
@@ -220,7 +251,15 @@ class VerificationPipeline:
                     agent_error = str(exc)
                 else:
                     agent_error = ""
-                links.append(LinkResult(link_name="agent_signature", passed=valid_agent_signature, status="passed" if valid_agent_signature else "failed", detail="agent signature verified" if valid_agent_signature else f"agent signature did not verify {agent_error}".strip()))
+                valid_agent_binding = not identity_errors
+                agent_valid = valid_agent_signature and valid_agent_binding
+                if identity_errors:
+                    detail = "; ".join(identity_errors)
+                elif not valid_agent_signature:
+                    detail = f"agent signature did not verify {agent_error}".strip()
+                else:
+                    detail = "agent signature and identity binding verified"
+                links.append(LinkResult(link_name="agent_signature", passed=agent_valid, status="passed" if agent_valid else "failed", detail=detail))
 
         # Step 4: verify the original browser signature captured at intake.
         if poi is None or evidence is None:
@@ -285,6 +324,10 @@ class VerificationPipeline:
         )
         return VerificationTrace(
             action_id=action_id,
+            agent_type=poi.agent_type if poi is not None else None,
+            agent_id=poi.agent_id if poi is not None else None,
+            action_type=poi.action_type if poi is not None else None,
+            policy_decision=poi.policy_decision if poi is not None else None,
             overall_valid=overall_valid,
             links=links,
             timestamp_verified=bool(links and links[-1].status == "passed"),

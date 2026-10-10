@@ -19,6 +19,10 @@ class ProofOfIntent(BaseModel):
     model_id: str = Field(min_length=1)
     timestamp: str = Field(min_length=1)
     nonce: str = Field(min_length=1)
+    agent_type: str | None = Field(default=None, min_length=1)
+    agent_id: str | None = Field(default=None, min_length=1)
+    action_type: str | None = Field(default=None, min_length=1)
+    policy_decision: str | None = Field(default=None, min_length=1)
     agent_signature: str | None = None
     agent_pubkey_id: str | None = None
 

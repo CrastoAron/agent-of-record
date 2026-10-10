@@ -21,6 +21,13 @@ export default function TraceView({ trace }) {
           Action ID: <code>{trace.action_id}</code>
         </p>
       )}
+      {(trace.agent_type || trace.agent_id || trace.action_type) && (
+        <p className="action-id">
+          Agent: <code>{trace.agent_type || "unknown"}</code>
+          {trace.agent_id && <> · ID: <code>{trace.agent_id}</code></>}
+          {trace.action_type && <> · Action: <code>{trace.action_type}</code></>}
+        </p>
+      )}
       <div className="trace-table">
         {trace.links.map((link) => (
           <article

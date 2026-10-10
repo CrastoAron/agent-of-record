@@ -9,12 +9,18 @@ import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from action_executor import ActionExecutor
 from action_executor.smtp_action import SMTPConfig
+from aor.agents.audit import AuditAgent
+from aor.agents.base import AgentRegistry
+from aor.agents.database import DatabaseAgent
+from aor.agents.email import EmailAgent, EmailAction
+from aor.agents.file import FileAgent
+from aor.agents.router import AgentRouter
 from key_registry import KeyRegistry
 from key_registry.jwks import import_jwk
 from key_registry.models import RegisterKeyRequest, RevokeKeyRequest
@@ -90,6 +96,7 @@ def create_app(
     key_registry: KeyRegistry | None = None,
     database_path: str | Path | None = None,
     agent_runtime: AgentRuntime | None = None,
+    workspace_dir: str | Path | None = None,
 ) -> FastAPI:
     """Build an app with injectable stores/handler for isolated tests."""
     service = FastAPI(title="AoR Signature Verifier", version="0.1.0")
@@ -111,14 +118,49 @@ def create_app(
     service.state.nonce_store = nonce_store or NonceStore()
     service.state.verifier = SignatureVerifier(service.state.pubkey_store, service.state.nonce_store)
     service.state.on_verified = on_verified or _default_verified_handler
-    service.state.agent_runtime = agent_runtime or AgentRuntime()
     service.state.operations: list[dict[str, str]] = []
     service.state.ledger = Ledger()
     service.state.verified_envelopes: list[dict[str, str]] = []
     service.state.artifact_store = ActionEvidenceStore(service.state.database)
     service.state.anchor_store = AnchorStore()
     service.state.outbox_dir = Path(__file__).resolve().parents[1] / ".aor_outbox"
-    service.state.agent_keypair = load_agent_keypair("demo-agent")
+    service.state.email_agent = EmailAgent(
+        SMTPConfig(dry_run=True, output_dir=service.state.outbox_dir)
+    )
+    service.state.workspace_dir = (
+        Path(workspace_dir)
+        if workspace_dir is not None
+        else Path(__file__).resolve().parents[1] / ".aor_workspace"
+    )
+    service.state.file_agent = FileAgent(service.state.workspace_dir)
+    service.state.audit_pipeline = VerificationPipeline(
+        service.state.key_registry or service.state.pubkey_store,
+        service.state.artifact_store,
+        service.state.anchor_store,
+    )
+    service.state.audit_agent = AuditAgent(
+        service.state.audit_pipeline,
+        service.state.artifact_store,
+    )
+    registered_databases = {}
+    if database_location != ":memory:" and Path(database_location).is_file():
+        registered_databases["aor"] = database_location
+    database_workspace = service.state.workspace_dir / "databases"
+    if database_workspace.is_dir():
+        registered_databases.update({path.stem: path for path in database_workspace.glob("*.sqlite3")})
+    service.state.database_agent = DatabaseAgent(
+        registered_databases,
+        workspace_dir=database_workspace,
+    )
+    service.state.agent_registry = AgentRegistry([
+        service.state.email_agent,
+        service.state.file_agent,
+        service.state.audit_agent,
+        service.state.database_agent,
+    ])
+    service.state.agent_router = AgentRouter(service.state.agent_registry)
+    service.state.agent_runtime = agent_runtime or AgentRuntime(service.state.email_agent)
+    service.state.agent_keypair = load_agent_keypair("email-agent")
 
     @service.post("/api/auth/signup", status_code=status.HTTP_201_CREATED)
     async def auth_signup(payload: dict[str, str], request: Request) -> dict[str, object]:
@@ -384,7 +426,8 @@ def create_app(
             # The demo planner is intentionally synchronous and deterministic.
             # A queued worker can be introduced with the durable run model if
             # an external provider is added later.
-            agent_action = request.app.state.agent_runtime.plan_email(envelope.prompt)
+            agent_plan = request.app.state.agent_runtime.plan_action(envelope.prompt)
+            agent_action = EmailAction(action_type="email", **agent_plan.payload)
         except AgentRuntimeError as exc:
             request.app.state.operations.insert(
                 0,
@@ -400,7 +443,7 @@ def create_app(
         ledger.append("system_prompt", {"text": system_prompt})
         ledger.append("user_prompt", {"text": envelope.prompt})
         ledger.append("agent_action", agent_action.action_payload())
-        action_payload = agent_action.action_payload()
+        action_payload = agent_plan.payload
         request.app.state.operations.insert(
             0,
             _operation_entry(
@@ -412,32 +455,48 @@ def create_app(
         )
         request.app.state.operations = request.app.state.operations[:50]
         agent_private_key, _ = request.app.state.agent_keypair
-        register_agent_public_key("demo-agent", request.app.state.key_registry or request.app.state.pubkey_store, agent_private_key)
-        poi = sign_poi(build_poi(envelope.prompt, system_prompt, ledger, action_payload, "demo-model"), agent_private_key)
+        register_agent_public_key("email-agent", request.app.state.key_registry or request.app.state.pubkey_store, agent_private_key)
+        poi = sign_poi(
+            build_poi(
+                envelope.prompt,
+                system_prompt,
+                ledger,
+                action_payload,
+                "demo-model",
+                agent_type=agent_plan.agent_type,
+                agent_id=agent_plan.agent_id,
+                action_type=agent_plan.action_type,
+                policy_decision=agent_plan.policy_decision,
+            ),
+            agent_private_key,
+        )
         output_dir = request.app.state.outbox_dir
         output_dir.mkdir(parents=True, exist_ok=True)
-        action_result = ActionExecutor(
-            SMTPConfig(dry_run=True, output_dir=output_dir),
-        ).execute_action("email", action_payload, poi)
-        if not action_result.success or not action_result.action_id:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=action_result.detail or "artifact_generation_failed")
+        action_result = request.app.state.email_agent.execute(agent_plan, poi)
+        if not action_result.success or not action_result.artifact_ref:
+            detail = action_result.details.get("detail") or action_result.details.get("error")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail or "artifact_generation_failed")
 
         artifact_path = max(output_dir.glob("*.eml"), key=lambda path: path.stat().st_mtime)
         request.app.state.artifact_store.register(
             ActionEvidence(
-                action_id=action_result.action_id,
+                action_id=action_result.artifact_ref,
                 user_envelope=envelope,
                 system_prompt=system_prompt,
                 ledger=ledger,
                 ledger_entry_count_at_action=len(ledger.all_entries()),
                 eml_bytes=artifact_path.read_bytes(),
+                poi=poi,
+                action_type=agent_plan.action_type,
+                action_payload=action_payload,
+                observed_effect=action_result.observed_effect,
             )
         )
         record_user_id = authenticated_user["id"] if authenticated_user else envelope.user_id
         request.app.state.database.save_prompt(
             envelope,
             user_id=record_user_id,
-            action_id=action_result.action_id,
+            action_id=action_result.artifact_ref,
             eml_path=str(artifact_path.resolve()),
         )
         request.app.state.operations.insert(
@@ -454,9 +513,188 @@ def create_app(
             "status": "artifact_generated",
             "agent_mode": request.app.state.agent_runtime.mode,
             "agent_draft": agent_action.model_dump(mode="json"),
-            "action_id": action_result.action_id,
+            "action_id": action_result.artifact_ref,
             "eml_path": str(artifact_path.resolve()),
-            "message_id": action_result.action_id,
+            "message_id": action_result.artifact_ref,
+        }
+
+    @service.post("/api/agent/execute")
+    async def execute_routed_agent(envelope: SignedEnvelope, request: Request) -> dict[str, object]:
+        """Route one signed prompt through the registered specialized agents."""
+        authenticated_user = _request_user(request)
+        if authenticated_user is not None and envelope.user_id != authenticated_user["id"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="prompt_user_mismatch")
+
+        verified_before = any(item == envelope.model_dump() for item in request.app.state.verified_envelopes)
+        if not verified_before:
+            verification = request.app.state.verifier.verify_envelope(envelope)
+            if not verification.valid:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="verification_failed")
+
+        route = request.app.state.agent_router.route(envelope.prompt)
+        if not route.handled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"reason": route.reason, "route": route.model_dump(mode="json")},
+            )
+        try:
+            plans = request.app.state.agent_router.plan(envelope.prompt)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+        registry = request.app.state.key_registry
+        if registry is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="key_registry_not_configured_for_agents",
+            )
+
+        system_prompt = "Route the signed request to one approved deterministic specialist."
+        execution_records: list[dict[str, object]] = []
+        previous_result: dict[str, object] | None = None
+        last_action_id: str | None = None
+        last_eml_path: str | None = None
+
+        for plan in plans:
+            if plan.requires_confirmation and not plan.confirmed:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "reason": "confirmation_required",
+                        "plan": plan.model_dump(mode="json"),
+                    },
+                )
+
+            payload = dict(plan.payload)
+            if (
+                plan.action_type == "file.create"
+                and not payload.get("content")
+                and previous_result is not None
+            ):
+                previous_details = previous_result.get("details")
+                if isinstance(previous_details, dict) and previous_details.get("report_markdown"):
+                    payload["content"] = previous_details["report_markdown"]
+            if (
+                plan.agent_type == "audit"
+                and plan.action_type in {
+                    "audit.verify_action",
+                    "audit.explain_failure",
+                    "audit.generate_report",
+                }
+                and not payload.get("action_id")
+                and previous_result is not None
+                and previous_result.get("artifact_ref")
+            ):
+                payload["action_id"] = str(previous_result["artifact_ref"])
+            if payload != plan.payload:
+                plan = plan.model_copy(update={"payload": payload})
+
+            ledger = request.app.state.ledger
+            ledger.append("system_prompt", {"text": system_prompt})
+            ledger.append("user_prompt", {"text": envelope.prompt})
+            ledger.append(
+                "agent_action",
+                {
+                    "agent_type": plan.agent_type,
+                    "agent_id": plan.agent_id,
+                    "action_type": plan.action_type,
+                    "payload": plan.payload,
+                },
+            )
+
+            agent = request.app.state.agent_registry.get(plan.agent_type)
+            agent_private_key, _ = load_agent_keypair(plan.agent_id or f"{plan.agent_type}-agent")
+            register_agent_public_key(agent.agent_id, registry, agent_private_key)
+            poi = sign_poi(
+                build_poi(
+                    envelope.prompt,
+                    system_prompt,
+                    ledger,
+                    plan.payload,
+                    "deterministic-agent-router",
+                    agent_type=plan.agent_type,
+                    agent_id=plan.agent_id or agent.agent_id,
+                    action_type=plan.action_type,
+                    policy_decision=plan.policy_decision,
+                ),
+                agent_private_key,
+            )
+
+            existing_eml = set(request.app.state.outbox_dir.glob("*.eml"))
+            action_result = agent.execute(plan, poi)
+            if plan.agent_type == "email" and action_result.artifact_ref:
+                action_id = action_result.artifact_ref
+            else:
+                action_id = f"{plan.agent_type}-{uuid4()}"
+
+            artifact_path = None
+            if plan.agent_type == "email":
+                new_eml = set(request.app.state.outbox_dir.glob("*.eml")) - existing_eml
+                if new_eml:
+                    artifact_path = max(new_eml, key=lambda path: path.stat().st_mtime)
+                    last_eml_path = str(artifact_path.resolve())
+
+            evidence = ActionEvidence(
+                action_id=action_id,
+                user_envelope=envelope,
+                system_prompt=system_prompt,
+                ledger=ledger,
+                ledger_entry_count_at_action=len(ledger.all_entries()),
+                eml_bytes=artifact_path.read_bytes() if artifact_path is not None else None,
+                poi=poi,
+                action_type=plan.action_type,
+                action_payload=plan.payload,
+                observed_effect=action_result.observed_effect,
+            )
+            request.app.state.artifact_store.register(evidence)
+            record_user_id = authenticated_user["id"] if authenticated_user else envelope.user_id
+            request.app.state.database.save_prompt(
+                envelope,
+                user_id=record_user_id,
+                action_id=action_id,
+                eml_path=str(artifact_path.resolve()) if artifact_path is not None else None,
+            )
+            execution_record = {
+                "action_id": action_id,
+                "agent_type": plan.agent_type,
+                "agent_id": plan.agent_id or agent.agent_id,
+                "action_type": plan.action_type,
+                "success": action_result.success,
+                "details": action_result.details,
+                "observed_effect": action_result.observed_effect,
+            }
+            execution_records.append(execution_record)
+            previous_result = action_result.model_dump(mode="json")
+            last_action_id = action_id
+            request.app.state.operations.insert(
+                0,
+                _operation_entry(
+                    "agent_execute",
+                    "completed" if action_result.success else "failed",
+                    f"{plan.agent_type}:{plan.action_type}",
+                    pubkey_id=envelope.pubkey_id,
+                ),
+            )
+            request.app.state.operations = request.app.state.operations[:50]
+            if not action_result.success:
+                break
+
+        completed = bool(execution_records) and all(record["success"] for record in execution_records)
+        first_plan = plans[0]
+        return {
+            "status": "agent_action_completed" if completed else "agent_action_failed",
+            "agent_mode": "deterministic",
+            "route": route.model_dump(mode="json"),
+            "agent_draft": {
+                "agent_type": first_plan.agent_type,
+                "agent_id": first_plan.agent_id,
+                "action_type": first_plan.action_type,
+                **first_plan.payload,
+            },
+            "agent_results": execution_records,
+            "action_id": last_action_id,
+            "eml_path": last_eml_path,
+            "message_id": last_action_id,
         }
 
     return service

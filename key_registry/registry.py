@@ -52,6 +52,7 @@ class KeyRegistry:
         algorithm: str,
         valid_from: datetime,
         valid_until: datetime | None = None,
+        agent_type: str | None = None,
     ) -> AgentKeyRecord:
         """Persist a public key for an agent and return its immutable record."""
         expected_algorithm = self._algorithm_for_key(public_key_bytes)
@@ -63,6 +64,7 @@ class KeyRegistry:
             raise ValueError(f"algorithm does not match public key: expected {expected_algorithm}")
         record = AgentKeyRecord(
             agent_id=agent_id,
+            agent_type=agent_type or self._agent_type_for_id(agent_id),
             pubkey_id=pubkey_id,
             public_key_bytes=public_key_bytes,
             algorithm=expected_algorithm,
@@ -72,6 +74,13 @@ class KeyRegistry:
         )
         self._storage.insert_key(record)
         return record
+
+    @staticmethod
+    def _agent_type_for_id(agent_id: str) -> str | None:
+        """Infer the conventional type from IDs such as ``email-agent``."""
+        if agent_id.endswith("-agent") and len(agent_id) > len("-agent"):
+            return agent_id[: -len("-agent")]
+        return None
 
     def register_pubkey(self, pubkey_id: str, public_key_bytes: bytes) -> None:
         """Stage 4 compatibility shim; prefer ``register_key`` for new callers."""
@@ -94,6 +103,11 @@ class KeyRegistry:
         if record is None or not self._is_active(record, self._now()):
             return None
         return record.public_key_bytes
+
+    def get_key_record(self, pubkey_id: str) -> AgentKeyRecord | None:
+        """Return an active key record for identity binding checks."""
+        record = self._storage.get_key_by_id(pubkey_id)
+        return record if record is not None and self._is_active(record, self._now()) else None
 
     def revoke_key(self, pubkey_id: str) -> bool:
         """Revoke a key permanently. Returns ``False`` when no such key exists."""

@@ -33,6 +33,7 @@ class PortalScenario:
     action_id: str
     eml_bytes: bytes
     poi_agent_key_id: str
+    poi_agent_private_key: Ed25519PrivateKey
     ledger: Ledger
 
 
@@ -68,7 +69,7 @@ def portal_scenario(tmp_path: Path) -> PortalScenario:
     agent_private_key = Ed25519PrivateKey.generate()
     agent_key_id = agent_pubkey_id(agent_private_key)
     registry.register_key(
-        "demo-agent", agent_key_id, serialize_public_key_raw(agent_private_key.public_key()), "Ed25519", datetime.now(timezone.utc)
+        "demo-agent", agent_key_id, serialize_public_key_raw(agent_private_key.public_key()), "Ed25519", datetime.now(timezone.utc), agent_type="email"
     )
 
     payload = {
@@ -86,6 +87,10 @@ def portal_scenario(tmp_path: Path) -> PortalScenario:
             ledger,
             payload,
             "demo-model",
+            agent_type="email",
+            agent_id="demo-agent",
+            action_type="email",
+            policy_decision="allow",
         ),
         agent_private_key,
     )
@@ -106,6 +111,9 @@ def portal_scenario(tmp_path: Path) -> PortalScenario:
             ledger=ledger,
             ledger_entry_count_at_action=len(ledger.all_entries()),
             eml_bytes=eml_bytes,
+            poi=poi,
+            action_type="email",
+            action_payload=payload,
         )
     )
     return PortalScenario(
@@ -115,5 +123,6 @@ def portal_scenario(tmp_path: Path) -> PortalScenario:
         action_id=action.action_id,
         eml_bytes=eml_bytes,
         poi_agent_key_id=agent_key_id,
+        poi_agent_private_key=agent_private_key,
         ledger=ledger,
     )

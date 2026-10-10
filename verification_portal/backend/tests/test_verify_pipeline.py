@@ -1,5 +1,8 @@
 import asyncio
+import base64
 from datetime import datetime, timezone
+from email import policy
+from email.parser import BytesParser
 
 import httpx
 
@@ -7,10 +10,21 @@ from verification_portal.backend.main import create_app
 from verification_portal.backend.models import VerificationTrace
 from verification_portal.backend.tsa_verify import TimestampAnchorResult
 from verification_portal.backend.verify_pipeline import VerificationPipeline
+from action_executor.poi_encoding import decode_poi_header, encode_poi_header
+from aor.agents.audit import AuditAgent
+from crypto_core import hash_payload
+from poi_generator import sign_poi
 
 
 def _links(trace: VerificationTrace):
     return {link.link_name: link for link in trace.links}
+
+
+def _tamper_poi(scenario, **updates):
+    message = BytesParser(policy=policy.default).parsebytes(scenario.eml_bytes)
+    poi = decode_poi_header(message["X-AoR-Proof-of-Intent"])
+    message.replace_header("X-AoR-Proof-of-Intent", encode_poi_header(poi.model_copy(update=updates)))
+    return message.as_bytes()
 
 
 def test_valid_email_verifies_all_six_links(portal_scenario):
@@ -106,6 +120,54 @@ def test_action_id_uses_saved_eml_evidence(portal_scenario):
 
     assert trace.overall_valid is True
     assert all(link.passed for link in trace.links)
+
+
+def test_tampered_agent_identity_fields_have_specific_reasons(portal_scenario):
+    cases = {
+        "agent_id": "other-agent",
+        "agent_type": "file",
+        "action_type": "file.update",
+    }
+
+    for field, value in cases.items():
+        trace = portal_scenario.pipeline.run_verification(_tamper_poi(portal_scenario, **{field: value}), None)
+        detail = _links(trace)["agent_signature"].detail
+        assert trace.overall_valid is False
+        assert f"{field}_mismatch" in detail
+
+
+def test_wrong_agent_key_is_rejected(portal_scenario):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    message = BytesParser(policy=policy.default).parsebytes(portal_scenario.eml_bytes)
+    poi = decode_poi_header(message["X-AoR-Proof-of-Intent"])
+    wrong_signed = sign_poi(poi, Ed25519PrivateKey.generate())
+    message.replace_header("X-AoR-Proof-of-Intent", encode_poi_header(wrong_signed))
+
+    trace = portal_scenario.pipeline.run_verification(message.as_bytes(), None)
+
+    assert trace.overall_valid is False
+    assert _links(trace)["agent_signature"].passed is False
+
+
+def test_audit_agent_detects_tampered_eml(portal_scenario):
+    tampered = portal_scenario.eml_bytes.replace(
+        b"The approved project update is attached.", b"The tampered update was substituted."
+    )
+    agent = AuditAgent(portal_scenario.pipeline, portal_scenario.evidence_store)
+    plan = agent.plan(
+        "verify uploaded eml",
+        {
+            "action_type": "audit.verify_eml",
+            "payload": {"eml_bytes_b64": base64.b64encode(tampered).decode("ascii")},
+        },
+    )
+    poi = type("Poi", (), {"action_payload_hash": hash_payload(plan.payload).hex()})()
+
+    result = agent.execute(plan, poi)
+
+    assert result.success is False
+    assert "action_payload_hash" in result.details["trace"]["links"][1]["detail"]
 
 
 def test_portal_looks_up_stage9_anchor_by_signed_root(monkeypatch, portal_scenario):

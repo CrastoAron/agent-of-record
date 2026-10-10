@@ -6,6 +6,7 @@ verification_portal/frontend/node_modules/
 verification_portal/frontend/dist/
 .aor_agent_keys/
 .aor_outbox/
+.aor_workspace/
 aor_data.sqlite3
 aor_data.sqlite3-*
 __pycache__/

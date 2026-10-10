@@ -159,6 +159,8 @@ database creation: `user@example.com` / `password123`.
 Important backend endpoints:
 
 - `POST /api/prompt` — verify a browser-signed prompt.
+- `POST /api/agent/execute` — route a signed prompt to the deterministic email,
+  file, audit, or read-only database agent and persist its evidence.
 - `POST /api/generate-artifact` — create and persist a dry-run `.eml` action.
 - `POST /verify` — verify an uploaded `.eml` artifact.
 - `GET /verify/{action_id}` — verify a generated action by ID.
@@ -187,9 +189,11 @@ npm run dev
 
 Open <http://127.0.0.1:5173> to access the unified web application. After
 logging in, the dashboard provides **New Prompt**, **Verify Action**, and
-**History** tabs. New Prompt runs browser signing, backend verification, PoI
-generation, dry-run email creation, and portal verification; History reads the
-same records from SQLite.
+**History** tabs. New Prompt runs browser signing, backend verification,
+deterministic agent routing, PoI generation, the selected action, and portal
+verification; History reads the same records from SQLite. File actions are
+sandboxed under `.aor_workspace/`, and email actions remain dry-run `.eml`
+files unless a real SMTP configuration is explicitly added.
 
 ## Security Behavior
 

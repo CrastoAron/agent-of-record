@@ -5,6 +5,52 @@ import CompactExecutionMetadata from "./CompactExecutionMetadata";
 import NodeDetailCard from "./NodeDetailCard";
 import TechnicalEvidenceSection from "./TechnicalEvidenceSection";
 
+function displayValue(value) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function AgentActionPreview({ draft, result }) {
+  const isEmail = draft.agent_type === "email" || draft.action_type === "email";
+  const executed = result?.success;
+  const statusLabel = result ? (executed ? "executed" : "failed") : "planned";
+  const statusClass = executed === false ? "fail" : "pass";
+  const effect = result?.observed_effect || {};
+  const details = result?.details || {};
+  const detailEntries = Object.entries(effect).filter(([, value]) => value !== undefined && value !== null);
+
+  return (
+    <div className="agent-draft-preview">
+      <div className="agent-draft-header">
+        <strong>{isEmail ? "Agent email draft" : `${draft.agent_type || "Specialized"} agent action`}</strong>
+        <span className={`status-badge ${statusClass}`}>{statusLabel}</span>
+      </div>
+
+      {isEmail ? (
+        <>
+          <div className="agent-draft-row"><span>To</span><code>{draft.to || "—"}</code></div>
+          <div className="agent-draft-row"><span>Subject</span><span>{draft.subject || "—"}</span></div>
+          <div className="agent-draft-body">{draft.body || "—"}</div>
+        </>
+      ) : (
+        <>
+          <div className="agent-draft-row"><span>Action</span><code>{draft.action_type || "—"}</code></div>
+          {draft.path && <div className="agent-draft-row"><span>Path</span><code>{draft.path}</code></div>}
+          {draft.database && <div className="agent-draft-row"><span>Database</span><code>{draft.database}</code></div>}
+          {details.rows && <div className="agent-draft-row"><span>Rows returned</span><span>{details.rows.length}</span></div>}
+          {details.error && <div className="agent-draft-row text-fail"><span>Error</span><span>{details.error}</span></div>}
+          {detailEntries.length > 0 && (
+            <div className="agent-draft-body">
+              {detailEntries.map(([key, value]) => `${key}: ${displayValue(value)}`).join("\n")}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function ChatMessageItem({ message, userName = "User" }) {
   const isUser = message.role === "user";
   const [selectedStepId, setSelectedStepId] = useState(null);
@@ -64,15 +110,10 @@ export default function ChatMessageItem({ message, userName = "User" }) {
         )}
 
         {execution.agentDraft && (
-          <div className="agent-draft-preview">
-            <div className="agent-draft-header">
-              <strong>Agent email draft</strong>
-              <span className="status-badge pass">validated</span>
-            </div>
-            <div className="agent-draft-row"><span>To</span><code>{execution.agentDraft.to}</code></div>
-            <div className="agent-draft-row"><span>Subject</span><span>{execution.agentDraft.subject}</span></div>
-            <div className="agent-draft-body">{execution.agentDraft.body}</div>
-          </div>
+          <AgentActionPreview
+            draft={execution.agentDraft}
+            result={execution.artifactResult?.agent_results?.[0]}
+          />
         )}
 
         {/* Attached Execution Pipeline Container */}

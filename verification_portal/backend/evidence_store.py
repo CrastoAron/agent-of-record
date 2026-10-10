@@ -9,10 +9,11 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from ledger_core import Ledger, LedgerEntry
 from verifier_service.models import SignedEnvelope
+from poi_generator.models import ProofOfIntent
 
 
 @dataclass
@@ -24,6 +25,10 @@ class ActionEvidence:
     # Number of leaves present when the PoI committed its context root.
     ledger_entry_count_at_action: int
     eml_bytes: bytes | None = None
+    poi: ProofOfIntent | None = None
+    action_type: str | None = None
+    action_payload: dict[str, Any] | None = None
+    observed_effect: dict[str, Any] | None = None
     # Stage 9 will store a validated RFC 3161 token here.
     timestamp_token: bytes | None = None
 
@@ -57,6 +62,10 @@ class ActionEvidenceStore:
         self._evidence[action_id] = evidence
         return evidence
 
+    def all(self) -> list[ActionEvidence]:
+        """Return currently loaded evidence for read-only audit scans."""
+        return list(self._evidence.values())
+
     @staticmethod
     def _serialize(evidence: ActionEvidence) -> str:
         entries = evidence.ledger.all_entries()[: evidence.ledger_entry_count_at_action]
@@ -76,6 +85,10 @@ class ActionEvidenceStore:
                 for entry in entries
             ],
             "eml_bytes": base64.b64encode(evidence.eml_bytes).decode("ascii") if evidence.eml_bytes is not None else None,
+            "poi": evidence.poi.model_dump(mode="json") if evidence.poi is not None else None,
+            "action_type": evidence.action_type,
+            "action_payload": evidence.action_payload,
+            "observed_effect": evidence.observed_effect,
             "timestamp_token": base64.b64encode(evidence.timestamp_token).decode("ascii") if evidence.timestamp_token is not None else None,
         }
         return json.dumps(payload, separators=(",", ":"))
@@ -101,5 +114,9 @@ class ActionEvidenceStore:
             ledger=Ledger.from_entries(entries),
             ledger_entry_count_at_action=payload["ledger_entry_count_at_action"],
             eml_bytes=base64.b64decode(payload["eml_bytes"]) if payload["eml_bytes"] is not None else None,
+            poi=ProofOfIntent.model_validate(payload["poi"]) if payload.get("poi") is not None else None,
+            action_type=payload.get("action_type"),
+            action_payload=payload.get("action_payload"),
+            observed_effect=payload.get("observed_effect"),
             timestamp_token=base64.b64decode(payload["timestamp_token"]) if payload["timestamp_token"] is not None else None,
         )

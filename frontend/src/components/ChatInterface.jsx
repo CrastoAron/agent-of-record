@@ -428,7 +428,7 @@ export default function ChatInterface({
       // Step 4, 5, 6. AUTHORIZATION, ACTION, RESULT: Commit ledger, execute action & write artifact
       const t4 = performance.now();
       updateMessageStep(agentMessageId, "authorization", { status: "running" });
-      const artRes = await fetch(`${VERIFIER_API_BASE}/api/generate-artifact`, {
+      const artRes = await fetch(`${VERIFIER_API_BASE}/api/agent/execute`, {
         method: "POST",
         headers: authService.getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(envelope),
@@ -437,7 +437,18 @@ export default function ChatInterface({
       const d4Total = Math.round(performance.now() - t4);
 
       if (!artRes.ok) {
-        throw new Error(artData.detail || "Action execution failed.");
+        const detail = artData.detail;
+        throw new Error(
+          typeof detail === "string"
+            ? detail
+            : detail?.reason || "Action execution failed."
+        );
+      }
+      if (artData.status === "agent_action_failed") {
+        const failedResult = (artData.agent_results || []).find((result) => !result.success);
+        throw new Error(
+          failedResult?.details?.error || "The selected agent could not execute the action."
+        );
       }
 
       const dAuth = Math.max(1, Math.round(d4Total * 0.35));
@@ -500,10 +511,12 @@ export default function ChatInterface({
               return {
                 ...m,
                 status: "success",
-                completionText: `Prepared an email to ${artData.agent_draft?.to || "the requested recipient"}. Action ${artData.action_id} executed successfully. Cryptographic proof and Merkle root verified.`,
+                completionText: `${artData.agent_draft?.agent_type || "Specialized agent"} completed ${artData.agent_draft?.action_type || "the requested action"}. Action ${artData.action_id} executed successfully. Cryptographic proof and Merkle root verified.`,
                 execution: {
                   ...m.execution,
                   actionId: artData.action_id,
+                  actionsCount: artData.agent_results?.length || 1,
+                  evidenceRecordsCount: (artData.agent_results?.length || 1) * 6,
                   backendResult: { registration: regData, verification: verData },
                   artifactResult: artData,
                   agentDraft: artData.agent_draft || null,

@@ -18,6 +18,7 @@ class AgentKeyRecord(BaseModel):
     """A registered public key and the time window in which it is usable."""
 
     agent_id: str = Field(min_length=1)
+    agent_type: str | None = Field(default=None, min_length=1)
     pubkey_id: str = Field(min_length=1)
     public_key_bytes: bytes = Field(min_length=1)
     algorithm: str = Field(min_length=1)
